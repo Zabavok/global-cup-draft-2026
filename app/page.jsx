@@ -8,12 +8,13 @@ import {
   createKnockoutRound,
   playUserFixture,
   qualificationFromTables,
+  simulateMatch,
   winnerOf,
 } from "./tournament";
 
 const BUDGET = 120;
 const MAX_PER_TEAM = 3;
-const STORAGE_KEY = "global-cup-draft-v2";
+const STORAGE_KEY = "global-cup-draft-v3";
 
 const formations = {
   "4-3-3": [
@@ -87,6 +88,83 @@ function formatMoney(value) {
   return `${Number(value.toFixed(1)).toLocaleString("ru-RU")} млн`;
 }
 
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
+function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, userRating, tactic, knockout) {
+  const home = teams.find((team) => team.id === fixture.homeId);
+  const away = teams.find((team) => team.id === fixture.awayId);
+  const opponent = home.id === userTeamId ? away : home;
+  const userIsHome = home.id === userTeamId;
+  const duration = fixture.result.penalties || (knockout && Math.random() < 0.24) ? 120 : 90;
+
+  function poolFor(teamId, attacking = false) {
+    const source = teamId === userTeamId ? userPlayers : allPlayers.filter((player) => player.teamId === teamId);
+    if (!attacking) return source;
+    const attackers = source.filter((player) => player.position === "FWD");
+    const midfielders = source.filter((player) => player.position === "MID");
+    return [...attackers, ...attackers, ...midfielders, ...source.filter((player) => player.position !== "GK")];
+  }
+
+  const events = [];
+  [[home.id, fixture.result.homeGoals], [away.id, fixture.result.awayGoals]].forEach(([teamId, goals]) => {
+    for (let index = 0; index < goals; index += 1) {
+      const scorer = randomItem(poolFor(teamId, true));
+      const assistants = poolFor(teamId, true).filter((player) => player?.id !== scorer?.id);
+      const assistant = Math.random() < 0.72 ? randomItem(assistants) : null;
+      events.push({
+        minute: 4 + Math.floor(Math.random() * (duration - 7)),
+        type: "goal",
+        teamId,
+        player: scorer?.name ?? teamName(teams.find((team) => team.id === teamId)),
+        detail: assistant ? `Гол · пас: ${assistant.name}` : "Гол без передачи",
+      });
+    }
+  });
+
+  const cardCount = 1 + Math.floor(Math.random() * 4);
+  for (let index = 0; index < cardCount; index += 1) {
+    const teamId = Math.random() < 0.5 ? home.id : away.id;
+    const player = randomItem(poolFor(teamId));
+    const red = Math.random() < 0.08;
+    events.push({
+      minute: 12 + Math.floor(Math.random() * Math.max(20, duration - 18)),
+      type: red ? "red" : "yellow",
+      teamId,
+      player: player?.name ?? teamName(teams.find((team) => team.id === teamId)),
+      detail: red ? "Красная карточка" : "Жёлтая карточка",
+    });
+  }
+  events.sort((a, b) => a.minute - b.minute);
+
+  const userPossession = clamp(Math.round(50 + (userRating - opponent.rating) * 0.55 + (tactic === "attack" ? 4 : tactic === "defensive" ? -4 : 0)), 35, 65);
+  const possession = userIsHome ? [userPossession, 100 - userPossession] : [100 - userPossession, userPossession];
+  const userShots = clamp(Math.round(9 + (userRating - opponent.rating) * 0.28 + (tactic === "attack" ? 4 : tactic === "defensive" ? -2 : 0) + Math.random() * 4), 4, 22);
+  const opponentShots = clamp(Math.round(9 + (opponent.rating - userRating) * 0.22 + (tactic === "attack" ? 2 : tactic === "defensive" ? -2 : 0) + Math.random() * 4), 3, 20);
+  const shots = userIsHome ? [userShots, opponentShots] : [opponentShots, userShots];
+  const userGoals = userIsHome ? fixture.result.homeGoals : fixture.result.awayGoals;
+  const opponentGoals = userIsHome ? fixture.result.awayGoals : fixture.result.homeGoals;
+  const userOnTarget = clamp(Math.max(userGoals, Math.round(userShots * (.34 + Math.random() * .16))), userGoals, userShots);
+  const opponentOnTarget = clamp(Math.max(opponentGoals, Math.round(opponentShots * (.32 + Math.random() * .16))), opponentGoals, opponentShots);
+  const onTarget = userIsHome ? [userOnTarget, opponentOnTarget] : [opponentOnTarget, userOnTarget];
+  const winningTeamId = fixture.result.homeGoals >= fixture.result.awayGoals ? home.id : away.id;
+  const goalEvents = events.filter((event) => event.type === "goal" && event.teamId === winningTeamId);
+  const mvp = randomItem(goalEvents)?.player ?? randomItem(poolFor(winningTeamId, true))?.name ?? teamName(teams.find((team) => team.id === winningTeamId));
+
+  return {
+    ...fixture,
+    result: {
+      ...fixture.result,
+      report: { duration, events, possession, shots, onTarget, mvp },
+    },
+  };
+}
+
 function initials(name) {
   const parts = name.trim().split(/\s+/);
   return `${parts[0]?.[0] ?? ""}${parts.at(-1)?.[0] ?? ""}`.toUpperCase();
@@ -131,6 +209,41 @@ function Scoreline({ fixture, teams }) {
       <strong>{result ? `${result.homeGoals} : ${result.awayGoals}` : "— : —"}</strong>
       <span>{teamName(away)} {flag(away.code)}</span>
       {result?.penalties && <small>пен. {result.penalties[0]}:{result.penalties[1]}</small>}
+    </div>
+  );
+}
+
+function MatchReport({ fixture, teams, compact = false }) {
+  const report = fixture?.result?.report;
+  if (!report) return null;
+  const home = teams.find((team) => team.id === fixture.homeId);
+  const away = teams.find((team) => team.id === fixture.awayId);
+  return (
+    <div className={`match-report ${compact ? "compact" : ""}`}>
+      <div className="report-head">
+        <span>Протокол матча</span>
+        <strong>{report.duration} минут{report.duration === 120 ? " · дополнительное время" : ""}</strong>
+      </div>
+      <div className="match-stats">
+        {[
+          ["Владение", `${report.possession[0]}%`, `${report.possession[1]}%`],
+          ["Удары", report.shots[0], report.shots[1]],
+          ["В створ", report.onTarget[0], report.onTarget[1]],
+        ].map(([label, homeValue, awayValue]) => (
+          <div key={label}><b>{homeValue}</b><span>{label}</span><b>{awayValue}</b></div>
+        ))}
+        <small>{teamName(home)}</small><small>{teamName(away)}</small>
+      </div>
+      <div className="event-list">
+        {report.events.length ? report.events.map((event, index) => (
+          <div className={event.teamId === fixture.homeId ? "home-event" : "away-event"} key={`${event.minute}-${event.player}-${index}`}>
+            <time>{event.minute}′</time>
+            <i>{event.type === "goal" ? "⚽" : event.type === "red" ? "🟥" : "🟨"}</i>
+            <span><strong>{event.player}</strong><small>{event.detail}</small></span>
+          </div>
+        )) : <p className="no-events">Без голов и карточек</p>}
+      </div>
+      <div className="mvp-line"><span>⭐ Игрок матча</span><strong>{report.mvp}</strong></div>
     </div>
   );
 }
@@ -213,7 +326,7 @@ function ResultModal({ score, formation, spent, coach, nation, onClose, onStart 
   );
 }
 
-function Tournament({ state, setState, teams, userTeam, userRating, onBackToDraft, onNewGame }) {
+function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam, userRating, onBackToDraft, onNewGame }) {
   const [tactic, setTactic] = useState("balanced");
   const groupFixtures = state.fixtures?.filter((fixture) => fixture.group === userTeam.group) ?? [];
   const userGroupFixtures = groupFixtures.filter((fixture) => fixture.homeId === userTeam.id || fixture.awayId === userTeam.id);
@@ -221,11 +334,34 @@ function Tournament({ state, setState, teams, userTeam, userRating, onBackToDraf
   const currentKnockoutFixture = state.round?.matches.find((fixture) => !fixture.result && (fixture.homeId === userTeam.id || fixture.awayId === userTeam.id));
   const tables = state.tables ?? (state.fixtures ? calculateTables(teams, state.fixtures) : {});
   const userRow = tables[userTeam.group]?.find((row) => row.teamId === userTeam.id);
+  const lastUserMatch = state.history?.at(-1);
+  const userKnockoutIndex = state.round?.matches.findIndex((fixture) => fixture.homeId === userTeam.id || fixture.awayId === userTeam.id) ?? -1;
+  const possibleNextFixture = state.round && state.round.index < 4 && userKnockoutIndex >= 0
+    ? state.round.matches[userKnockoutIndex % 2 === 0 ? userKnockoutIndex + 1 : userKnockoutIndex - 1]
+    : null;
 
   function playGroup() {
     if (!nextGroupFixture) return;
-    const played = playUserFixture(nextGroupFixture, teams, userTeam.id, userRating, state.seed, tactic);
-    const fixtures = state.fixtures.map((fixture) => fixture.id === played.id ? played : fixture);
+    const playedBase = playUserFixture(nextGroupFixture, teams, userTeam.id, userRating, state.seed, tactic);
+    const played = addMatchReport(playedBase, teams, allPlayers, userTeam.id, userPlayers, userRating, tactic, false);
+    const parallel = state.fixtures.find((fixture) =>
+      fixture.group === userTeam.group
+      && fixture.matchday === nextGroupFixture.matchday
+      && fixture.id !== nextGroupFixture.id
+      && !fixture.result
+    );
+    const parallelResult = parallel
+      ? simulateMatch(
+          teams.find((team) => team.id === parallel.homeId).rating,
+          teams.find((team) => team.id === parallel.awayId).rating,
+          `${state.seed}-group-${parallel.group}-${parallel.id}`,
+        )
+      : null;
+    const fixtures = state.fixtures.map((fixture) => {
+      if (fixture.id === played.id) return played;
+      if (parallel && fixture.id === parallel.id) return { ...fixture, result: parallelResult };
+      return fixture;
+    });
     const pending = fixtures.filter((fixture) => fixture.group === userTeam.group && (fixture.homeId === userTeam.id || fixture.awayId === userTeam.id) && !fixture.result);
     const history = [...(state.history ?? []), { stage: `Группа ${userTeam.group}`, ...played }];
     if (pending.length) {
@@ -252,7 +388,8 @@ function Tournament({ state, setState, teams, userTeam, userRating, onBackToDraf
 
   function playKnockout() {
     if (!currentKnockoutFixture) return;
-    const played = playUserFixture(currentKnockoutFixture, teams, userTeam.id, userRating, state.seed, tactic, true);
+    const playedBase = playUserFixture(currentKnockoutFixture, teams, userTeam.id, userRating, state.seed, tactic, true);
+    const played = addMatchReport(playedBase, teams, allPlayers, userTeam.id, userPlayers, userRating, tactic, true);
     const matches = state.round.matches.map((match) => match.id === played.id ? played : match);
     setState({
       ...state,
@@ -324,13 +461,32 @@ function Tournament({ state, setState, teams, userTeam, userRating, onBackToDraf
               <>
                 <h3>Таблица группы {userTeam.group}</h3>
                 <GroupTable rows={tables[userTeam.group]} teams={teams} userId={userTeam.id} />
-                <h3>Твои матчи</h3>
-                <div className="fixture-list">{userGroupFixtures.map((fixture) => <Scoreline key={fixture.id} fixture={fixture} teams={teams} />)}</div>
+                <h3>Все матчи по турам</h3>
+                <div className="round-fixtures">
+                  {[1, 2, 3].map((matchday) => (
+                    <div key={matchday}>
+                      <small>Тур {matchday}</small>
+                      {groupFixtures.filter((fixture) => fixture.matchday === matchday).map((fixture) => <Scoreline key={fixture.id} fixture={fixture} teams={teams} />)}
+                    </div>
+                  ))}
+                </div>
+                {lastUserMatch?.result?.report && <><h3>Последний матч</h3><MatchReport fixture={lastUserMatch} teams={teams} compact /></>}
               </>
             )}
             {state.stage === "knockout" && (
               <>
                 <h3>Сетка · {state.round.name}</h3>
+                {possibleNextFixture && (
+                  <div className="next-opponent">
+                    <span>Кто может попасться дальше</span>
+                    <strong>
+                      {teamName(teams.find((team) => team.id === possibleNextFixture.homeId))}
+                      <em> или </em>
+                      {teamName(teams.find((team) => team.id === possibleNextFixture.awayId))}
+                    </strong>
+                    <small>Победитель соседней пары встретится с победителем твоего матча.</small>
+                  </div>
+                )}
                 <div className="fixture-list">{state.round.matches.map((fixture) => <Scoreline key={fixture.id} fixture={fixture} teams={teams} />)}</div>
               </>
             )}
@@ -354,6 +510,7 @@ function Tournament({ state, setState, teams, userTeam, userRating, onBackToDraf
           <span className="hero-label">{state.round.name} завершён</span>
           <h2>{winnerOf(state.round.matches.find((m) => m.homeId === userTeam.id || m.awayId === userTeam.id)) === userTeam.id ? "Идём дальше!" : "На этот раз не получилось"}</h2>
           <Scoreline fixture={state.round.matches.find((m) => m.homeId === userTeam.id || m.awayId === userTeam.id)} teams={teams} />
+          <MatchReport fixture={state.round.matches.find((m) => m.homeId === userTeam.id || m.awayId === userTeam.id)} teams={teams} />
           <button className="play-button" onClick={advanceRound}>Продолжить <Icon name="arrow" /></button>
         </section>
       )}
@@ -566,7 +723,19 @@ export default function DraftGame() {
 
   if (!hydrated) return <main className="loading-screen"><Brand /><span>Загружаем турнир…</span></main>;
   if (!selectedNation) return <NationSelect onSelect={(id) => setSelectedNationId(id)} />;
-  if (tournament) return <Tournament state={tournament} setState={setTournament} teams={gameData.teams} userTeam={selectedNation} userRating={userRating} onBackToDraft={() => setTournament(null)} onNewGame={resetAll} />;
+  if (tournament) return (
+    <Tournament
+      state={tournament}
+      setState={setTournament}
+      teams={gameData.teams}
+      allPlayers={gameData.players}
+      userPlayers={selectedPlayers}
+      userTeam={selectedNation}
+      userRating={userRating}
+      onBackToDraft={() => setTournament(null)}
+      onNewGame={resetAll}
+    />
+  );
 
   return (
     <main className="game-shell">

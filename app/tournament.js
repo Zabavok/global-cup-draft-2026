@@ -55,8 +55,10 @@ export function buildGroupFixtures(teams, userTeamId, seed) {
     pairIndexes.forEach(([homeIndex, awayIndex], matchIndex) => {
       const home = groupTeams[homeIndex];
       const away = groupTeams[awayIndex];
-      const hasUser = home.id === userTeamId || away.id === userTeamId;
-      const result = hasUser ? null : simulateMatch(home.rating, away.rating, `${seed}-group-${group}-${matchIndex}`);
+      // В группе пользователя весь тур играется только после его нажатия:
+      // сначала его матч, одновременно — вторая пара этого же тура.
+      const isUserGroup = groupTeams.some((team) => team.id === userTeamId);
+      const result = isUserGroup ? null : simulateMatch(home.rating, away.rating, `${seed}-group-${group}-${matchIndex}`);
       fixtures.push({
         id: `${group}-${matchIndex}`,
         group,
@@ -122,15 +124,17 @@ export function qualificationFromTables(tables) {
 
 export function createKnockoutRound(teamIds, teams, userTeamId, userRating, seed, roundIndex) {
   const byId = new Map(teams.map((team) => [team.id, team]));
-  const ordered = [...teamIds].sort((a, b) => {
-    const aRating = a === userTeamId ? userRating : byId.get(a).rating;
-    const bRating = b === userTeamId ? userRating : byId.get(b).rating;
-    return bRating - aRating;
-  });
+  const ordered = roundIndex === 0
+    ? [...teamIds].sort((a, b) => {
+        const aRating = a === userTeamId ? userRating : byId.get(a).rating;
+        const bRating = b === userTeamId ? userRating : byId.get(b).rating;
+        return bRating - aRating;
+      })
+    : [...teamIds];
   const matches = [];
   while (ordered.length) {
     const homeId = ordered.shift();
-    const awayId = ordered.pop();
+    const awayId = roundIndex === 0 ? ordered.pop() : ordered.shift();
     const hasUser = homeId === userTeamId || awayId === userTeamId;
     const homeRating = homeId === userTeamId ? userRating : byId.get(homeId).rating;
     const awayRating = awayId === userTeamId ? userRating : byId.get(awayId).rating;
@@ -166,4 +170,3 @@ export function playUserFixture(fixture, teams, userTeamId, userRating, seed, ta
       };
   return { ...fixture, result, tactic };
 }
-

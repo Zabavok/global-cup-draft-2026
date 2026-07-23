@@ -62,7 +62,7 @@ const teams = sourceTeams.map((row) => {
   const elo = toNumber(row.elo_rating, 1500);
   const teamRating = Math.round(Math.max(64, Math.min(92, 64 + (elo - 1500) / 24)));
   const coachRating = Math.round(Math.max(64, Math.min(90, teamRating - 1 + Math.max(0, 30 - ranking) / 20)));
-  const coachPrice = Number(Math.max(3.5, Math.min(10, 3.5 + (coachRating - 62) * 0.2)).toFixed(1));
+  const coachPrice = Number(Math.max(2.5, Math.min(7, 2.5 + (coachRating - 62) * 0.14)).toFixed(1));
   return {
     id: toNumber(row.team_id),
     name: row.team_name,
@@ -139,7 +139,7 @@ const players = sourcePlayers.map((row) => {
   const normalizedName = normalizeName(row.player_name);
   const override = ratingOverrides.find(([name]) => normalizedName.includes(name));
   const rating = override?.[1] ?? calculatedRating;
-  const price = Number(Math.max(1.5, Math.min(20, 1.2 + (rating - 62) * 0.45 + Math.sqrt(Math.max(marketM, 0.1)) * 0.28)).toFixed(1));
+  const price = Number(Math.max(1.5, Math.min(16, 1.2 + (rating - 62) * 0.34 + Math.sqrt(Math.max(marketM, 0.1)) * 0.2)).toFixed(1));
 
   return {
     id: toNumber(row.player_id),
