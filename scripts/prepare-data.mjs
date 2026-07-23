@@ -60,7 +60,8 @@ const statsById = new Map(sourceStats.map((row) => [row.player_id, row]));
 const teams = sourceTeams.map((row) => {
   const ranking = toNumber(row.fifa_ranking_pre_tournament, 100);
   const elo = toNumber(row.elo_rating, 1500);
-  const coachRating = Math.round(Math.max(62, Math.min(94, 63 + (elo - 1500) / 13 - ranking / 18)));
+  const teamRating = Math.round(Math.max(64, Math.min(92, 64 + (elo - 1500) / 24)));
+  const coachRating = Math.round(Math.max(64, Math.min(90, teamRating - 1 + Math.max(0, 30 - ranking) / 20)));
   const coachPrice = Number(Math.max(3.5, Math.min(10, 3.5 + (coachRating - 62) * 0.2)).toFixed(1));
   return {
     id: toNumber(row.team_id),
@@ -70,6 +71,7 @@ const teams = sourceTeams.map((row) => {
     confederation: row.confederation,
     ranking,
     elo,
+    rating: teamRating,
     coach: {
       id: `coach-${row.team_id}`,
       name: row.manager_name,
@@ -80,6 +82,37 @@ const teams = sourceTeams.map((row) => {
 });
 
 const teamById = new Map(teams.map((team) => [team.id, team]));
+const normalizeName = (value) => value
+  .normalize("NFD")
+  .replace(/\p{Diacritic}/gu, "")
+  .toLowerCase();
+
+// Ключевые звёзды закреплены по шкале EA SPORTS FC 26.
+// Остальные игроки рассчитываются по рыночной стоимости, опыту и свежей форме.
+const ratingOverrides = [
+  ["thibaut nicolas courtois", 89],
+  ["ferran torres", 83],
+  ["kylian mbappe", 91],
+  ["erling braut haaland", 91],
+  ["jude victor william bellingham", 90],
+  ["rodrigo rodri", 90],
+  ["virgil van dijk", 90],
+  ["hamed mahrous mohamed salah", 91],
+  ["lamine yamal", 89],
+  ["masour ousmane dembele", 90],
+  ["achraf hakimi", 89],
+  ["florian richard wirtz", 89],
+  ["pedro pedri", 89],
+  ["declan rice", 89],
+  ["harry edward kane", 89],
+  ["lautaro javier martinez", 88],
+  ["bukayo ayoyinka saka", 88],
+  ["alexander isak", 88],
+  ["kevin de bruyne", 87],
+  ["lionel andres messi", 86],
+  ["cristiano ronaldo", 85],
+];
+
 const players = sourcePlayers.map((row) => {
   const stats = statsById.get(row.player_id) ?? {};
   const marketValue = toNumber(row.market_value_eur);
@@ -96,14 +129,17 @@ const players = sourcePlayers.map((row) => {
   const position = row.position;
   const team = teamById.get(toNumber(row.team_id));
 
-  const experience = Math.min(8, Math.log1p(caps) * 1.5);
-  let outputSignal = tournamentGoals * 2.4 + assists * 1.8;
-  if (position === "GK") outputSignal += cleanSheets * 1.6 + saves * 0.12;
-  const form = Math.min(8, matches * 0.6 + starts * 0.35 + minutes / 300 + outputSignal);
-  const valueSignal = Math.min(22, Math.log1p(Math.max(marketM, 0.1)) * 5.2);
-  const goalSignal = Math.min(5, Math.sqrt(Math.max(internationalGoals, 0)) * 0.65);
-  const rating = Math.round(Math.max(57, Math.min(96, 57 + valueSignal + experience + form + goalSignal)));
-  const price = Number(Math.max(1.5, Math.min(22, 1.4 + Math.sqrt(Math.max(marketM, 0.1)) * 1.48)).toFixed(1));
+  const valueSignal = 63 + Math.log10(Math.max(marketM, 0) + 1) * 8.8;
+  const experience = Math.min(2.2, Math.log10(caps + 1) * 1.15);
+  let form = Math.min(2.2, matches * 0.12 + starts * 0.09 + minutes / 1800 + tournamentGoals * 0.35 + assists * 0.25);
+  if (position === "GK") form += Math.min(1.2, cleanSheets * 0.18 + saves * 0.012);
+  const international = Math.min(1.2, Math.sqrt(Math.max(internationalGoals, 0)) * 0.13);
+  const positionAdjustment = position === "GK" ? 3.5 : position === "DEF" ? 0.8 : 0;
+  const calculatedRating = Math.round(Math.max(62, Math.min(90, valueSignal + experience + form + international + positionAdjustment)));
+  const normalizedName = normalizeName(row.player_name);
+  const override = ratingOverrides.find(([name]) => normalizedName.includes(name));
+  const rating = override?.[1] ?? calculatedRating;
+  const price = Number(Math.max(1.5, Math.min(20, 1.2 + (rating - 62) * 0.45 + Math.sqrt(Math.max(marketM, 0.1)) * 0.28)).toFixed(1));
 
   return {
     id: toNumber(row.player_id),
