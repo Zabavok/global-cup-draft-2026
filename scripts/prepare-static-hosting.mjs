@@ -16,8 +16,12 @@ if (!stylesheet || !moduleScript) {
   throw new Error("Vite output does not contain the expected CSS and JavaScript assets.");
 }
 
-const css = fs.readFileSync(path.join(spa, stylesheet[1].replace(/^\//, "")), "utf8");
-const javascript = fs.readFileSync(path.join(spa, moduleScript[1].replace(/^\//, "")), "utf8");
+const css = fs
+  .readFileSync(path.join(spa, stylesheet[1].replace(/^\//, "")), "utf8")
+  .replace(/<\/style/gi, "<\\/style");
+const javascript = fs
+  .readFileSync(path.join(spa, moduleScript[1].replace(/^\//, "")), "utf8")
+  .replace(/<\/script/gi, "<\\/script");
 const icon = fs.readFileSync(path.join(root, "app", "icon.svg"), "utf8");
 
 html = html
