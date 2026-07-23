@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // Относительные пути работают и на основном домене, и внутри GitHub Pages.
+  base: "./",
   plugins: [react()],
   resolve: {
     alias: {
