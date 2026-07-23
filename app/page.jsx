@@ -122,6 +122,7 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
         type: "goal",
         teamId,
         player: scorer?.name ?? teamName(teams.find((team) => team.id === teamId)),
+        assistant: assistant?.name ?? null,
         detail: assistant ? `Гол · пас: ${assistant.name}` : "Гол без передачи",
       });
     }
@@ -213,11 +214,30 @@ function Scoreline({ fixture, teams }) {
   );
 }
 
+function MatchEventRows({ events, fixture }) {
+  if (!events.length) return <p className="no-events">Без голов и карточек</p>;
+  return events.map((event, index) => (
+    <div className={event.teamId === fixture.homeId ? "home-event" : "away-event"} key={`${event.minute}-${event.player}-${index}`}>
+      <time>{event.minute}′</time>
+      <i>{event.type === "goal" ? "⚽" : event.type === "red" ? "🟥" : "🟨"}</i>
+      <span><strong>{event.player}</strong><small>{event.detail}</small></span>
+    </div>
+  ));
+}
+
 function MatchReport({ fixture, teams, compact = false }) {
   const report = fixture?.result?.report;
   if (!report) return null;
   const home = teams.find((team) => team.id === fixture.homeId);
   const away = teams.find((team) => team.id === fixture.awayId);
+  const firstHalf = report.events.filter((event) => event.minute <= 45);
+  const secondHalf = report.events.filter((event) => event.minute > 45 && event.minute <= 90);
+  const extraTime = report.events.filter((event) => event.minute > 90);
+  const halfGoals = firstHalf.filter((event) => event.type === "goal");
+  const halfScore = [
+    halfGoals.filter((event) => event.teamId === fixture.homeId).length,
+    halfGoals.filter((event) => event.teamId === fixture.awayId).length,
+  ];
   return (
     <div className={`match-report ${compact ? "compact" : ""}`}>
       <div className="report-head">
@@ -235,13 +255,24 @@ function MatchReport({ fixture, teams, compact = false }) {
         <small>{teamName(home)}</small><small>{teamName(away)}</small>
       </div>
       <div className="event-list">
-        {report.events.length ? report.events.map((event, index) => (
-          <div className={event.teamId === fixture.homeId ? "home-event" : "away-event"} key={`${event.minute}-${event.player}-${index}`}>
-            <time>{event.minute}′</time>
-            <i>{event.type === "goal" ? "⚽" : event.type === "red" ? "🟥" : "🟨"}</i>
-            <span><strong>{event.player}</strong><small>{event.detail}</small></span>
-          </div>
-        )) : <p className="no-events">Без голов и карточек</p>}
+        <section className="event-period">
+          <div className="period-label"><span>Первый тайм</span><b>0′ — 45′</b></div>
+          <MatchEventRows events={firstHalf} fixture={fixture} />
+        </section>
+        <div className="halftime-line"><span>Перерыв</span><strong>{halfScore[0]} : {halfScore[1]}</strong></div>
+        <section className="event-period">
+          <div className="period-label"><span>Второй тайм</span><b>46′ — 90′</b></div>
+          <MatchEventRows events={secondHalf} fixture={fixture} />
+        </section>
+        {report.duration === 120 && (
+          <>
+            <div className="halftime-line extra"><span>Основное время завершено</span><strong>{fixture.result.homeGoals} : {fixture.result.awayGoals}</strong></div>
+            <section className="event-period extra-time">
+              <div className="period-label"><span>Дополнительное время</span><b>91′ — 120′</b></div>
+              <MatchEventRows events={extraTime} fixture={fixture} />
+            </section>
+          </>
+        )}
       </div>
       <div className="mvp-line"><span>⭐ Игрок матча</span><strong>{report.mvp}</strong></div>
     </div>
@@ -326,12 +357,67 @@ function ResultModal({ score, formation, spent, coach, nation, onClose, onStart 
   );
 }
 
+function TeamLeaders({ history, userTeamId, userPlayers }) {
+  const totals = new Map(userPlayers.map((player) => [player.name, {
+    name: player.name,
+    goals: 0,
+    assists: 0,
+    yellow: 0,
+    red: 0,
+  }]));
+
+  history.forEach((fixture) => {
+    fixture.result?.report?.events?.forEach((event) => {
+      if (event.teamId !== userTeamId) return;
+      if (!totals.has(event.player)) {
+        totals.set(event.player, { name: event.player, goals: 0, assists: 0, yellow: 0, red: 0 });
+      }
+      const player = totals.get(event.player);
+      if (event.type === "goal") player.goals += 1;
+      if (event.type === "yellow") player.yellow += 1;
+      if (event.type === "red") player.red += 1;
+      if (event.assistant) {
+        if (!totals.has(event.assistant)) {
+          totals.set(event.assistant, { name: event.assistant, goals: 0, assists: 0, yellow: 0, red: 0 });
+        }
+        totals.get(event.assistant).assists += 1;
+      }
+    });
+  });
+
+  const leaders = [...totals.values()]
+    .sort((a, b) => (b.goals * 4 + b.assists * 2 - b.red) - (a.goals * 4 + a.assists * 2 - a.red) || a.name.localeCompare(b.name))
+    .slice(0, 5);
+
+  return (
+    <section className="team-leaders">
+      <div className="leaders-title">
+        <div><span className="hero-label">Статистика турнира</span><h3>Лидеры твоей команды</h3></div>
+        <strong>{history.length} <small>матчей</small></strong>
+      </div>
+      <div className="leaders-table">
+        <div className="leaders-head"><span>Игрок</span><b>Голы</b><b>Передачи</b><b>Карточки</b></div>
+        {leaders.map((player, index) => (
+          <div key={player.name}>
+            <em>{index + 1}</em>
+            <span>{player.name}</span>
+            <strong>{player.goals}</strong>
+            <strong>{player.assists}</strong>
+            <small>{player.yellow ? `🟨 ${player.yellow}` : ""}{player.red ? `  🟥 ${player.red}` : ""}{!player.yellow && !player.red ? "—" : ""}</small>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam, userRating, onBackToDraft, onNewGame }) {
   const [tactic, setTactic] = useState("balanced");
   const groupFixtures = state.fixtures?.filter((fixture) => fixture.group === userTeam.group) ?? [];
   const userGroupFixtures = groupFixtures.filter((fixture) => fixture.homeId === userTeam.id || fixture.awayId === userTeam.id);
   const nextGroupFixture = userGroupFixtures.find((fixture) => !fixture.result);
   const currentKnockoutFixture = state.round?.matches.find((fixture) => !fixture.result && (fixture.homeId === userTeam.id || fixture.awayId === userTeam.id));
+  const currentThirdPlaceFixture = state.thirdPlaceFixture && !state.thirdPlaceFixture.result ? state.thirdPlaceFixture : null;
   const tables = state.tables ?? (state.fixtures ? calculateTables(teams, state.fixtures) : {});
   const userRow = tables[userTeam.group]?.find((row) => row.teamId === userTeam.id);
   const lastUserMatch = state.history?.at(-1);
@@ -399,24 +485,71 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
     });
   }
 
+  function playThirdPlace() {
+    if (!currentThirdPlaceFixture) return;
+    const playedBase = playUserFixture(currentThirdPlaceFixture, teams, userTeam.id, userRating, state.seed, tactic, true);
+    const played = addMatchReport(playedBase, teams, allPlayers, userTeam.id, userPlayers, userRating, tactic, true);
+    setState({
+      ...state,
+      stage: "third-place-summary",
+      thirdPlaceFixture: played,
+      history: [...(state.history ?? []), { stage: "Матч за 3-е место", ...played }],
+    });
+  }
+
   function advanceRound() {
     const winners = state.round.matches.map(winnerOf);
     if (!winners.includes(userTeam.id)) {
+      if (state.round.index === 4) {
+        setState({ ...state, stage: "runner-up", placement: 2, message: "Серебро чемпионата мира" });
+        return;
+      }
+      if (state.round.index === 3) {
+        const otherSemifinal = state.round.matches.find((match) => match.homeId !== userTeam.id && match.awayId !== userTeam.id);
+        const otherWinner = winnerOf(otherSemifinal);
+        const otherLoser = otherSemifinal.homeId === otherWinner ? otherSemifinal.awayId : otherSemifinal.homeId;
+        setState({
+          ...state,
+          stage: "third-place",
+          thirdPlaceFixture: {
+            id: "third-place",
+            homeId: userTeam.id,
+            awayId: otherLoser,
+            result: null,
+          },
+          message: "Впереди матч за бронзовые медали",
+        });
+        return;
+      }
       setState({ ...state, stage: "eliminated", message: `Путь завершён: ${state.round.name}` });
       return;
     }
     if (state.round.index === 4) {
-      setState({ ...state, stage: "champion", message: "Ты выиграл чемпионат мира!" });
+      setState({ ...state, stage: "champion", placement: 1, message: "Ты выиграл чемпионат мира!" });
       return;
     }
     const round = createKnockoutRound(winners, teams, userTeam.id, userRating, state.seed, state.round.index + 1);
     setState({ ...state, stage: "knockout", round });
   }
 
-  const focusFixture = nextGroupFixture ?? currentKnockoutFixture;
+  function finishThirdPlace() {
+    const won = winnerOf(state.thirdPlaceFixture) === userTeam.id;
+    setState({
+      ...state,
+      stage: won ? "bronze" : "fourth",
+      placement: won ? 3 : 4,
+      message: won ? "Бронза чемпионата мира" : "Четвёртое место на чемпионате мира",
+    });
+  }
+
+  const focusFixture = nextGroupFixture ?? currentKnockoutFixture ?? currentThirdPlaceFixture;
   const opponentId = focusFixture && (focusFixture.homeId === userTeam.id ? focusFixture.awayId : focusFixture.homeId);
   const opponent = teams.find((team) => team.id === opponentId);
-  const stageTitle = state.stage.startsWith("group") ? `Группа ${userTeam.group}` : state.round?.name ?? "Турнир";
+  const stageTitle = state.stage.startsWith("group")
+    ? `Группа ${userTeam.group}`
+    : state.stage.startsWith("third-place")
+      ? "Матч за 3-е место"
+      : state.round?.name ?? "Турнир";
 
   return (
     <main className="tournament-shell">
@@ -436,10 +569,14 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
         </div>
       </section>
 
-      {(state.stage === "group" || state.stage === "knockout") && focusFixture && (
+      {(state.stage === "group" || state.stage === "knockout" || state.stage === "third-place") && focusFixture && (
         <section className="match-center">
           <div className="match-card">
-            <span className="match-kicker">{state.stage === "group" ? `Матч ${userGroupFixtures.filter((item) => item.result).length + 1} из 3` : state.round.name}</span>
+            <span className="match-kicker">
+              {state.stage === "group"
+                ? `Матч ${userGroupFixtures.filter((item) => item.result).length + 1} из 3`
+                : state.stage === "third-place" ? "Последний матч · борьба за бронзу" : state.round.name}
+            </span>
             <div className="versus">
               <div><span>{flag(userTeam.code)}</span><strong>{teamName(userTeam)}</strong><small>Твой состав · {userRating}</small></div>
               <b>VS</b>
@@ -453,7 +590,7 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
                 </button>
               ))}
             </div>
-            <button className="play-button" onClick={state.stage === "group" ? playGroup : playKnockout}>Сыграть матч <Icon name="arrow" /></button>
+            <button className="play-button" onClick={state.stage === "group" ? playGroup : state.stage === "third-place" ? playThirdPlace : playKnockout}>Сыграть матч <Icon name="arrow" /></button>
           </div>
 
           <aside className="tournament-side">
@@ -490,6 +627,14 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
                 <div className="fixture-list">{state.round.matches.map((fixture) => <Scoreline key={fixture.id} fixture={fixture} teams={teams} />)}</div>
               </>
             )}
+            {state.stage === "third-place" && (
+              <div className="bronze-preview">
+                <span>🥉</span>
+                <h3>Последний шанс забрать медаль</h3>
+                <p>Победитель завершит турнир на третьем месте. Проигравший останется четвёртым.</p>
+                <Scoreline fixture={state.thirdPlaceFixture} teams={teams} />
+              </div>
+            )}
           </aside>
         </section>
       )}
@@ -515,14 +660,42 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
         </section>
       )}
 
-      {(state.stage === "eliminated" || state.stage === "champion") && (
+      {state.stage === "third-place-summary" && (
+        <section className="summary-screen bronze-summary">
+          <span className="summary-icon">{winnerOf(state.thirdPlaceFixture) === userTeam.id ? "🥉" : <Icon name="close" size={31} />}</span>
+          <span className="hero-label">Матч за 3-е место завершён</span>
+          <h2>{winnerOf(state.thirdPlaceFixture) === userTeam.id ? "Бронзовые медали наши!" : "Останавливаемся в шаге от медалей"}</h2>
+          <Scoreline fixture={state.thirdPlaceFixture} teams={teams} />
+          <MatchReport fixture={state.thirdPlaceFixture} teams={teams} />
+          <button className="play-button" onClick={finishThirdPlace}>Подвести итоги <Icon name="arrow" /></button>
+        </section>
+      )}
+
+      {["eliminated", "champion", "runner-up", "bronze", "fourth"].includes(state.stage) && (
         <section className={`ending-screen ${state.stage}`}>
-          <div className="ending-cup"><Icon name="trophy" size={82} /></div>
-          <span className="hero-label">{state.stage === "champion" ? "Новый чемпион мира" : "Турнир окончен"}</span>
-          <h1>{state.stage === "champion" ? `${teamName(userTeam)} — чемпион!` : state.message}</h1>
+          <div className="ending-watermark" aria-hidden="true"><strong>{flag(userTeam.code)}</strong><span>{teamName(userTeam)}</span></div>
+          <div className="ending-cup">
+            {state.stage === "champion" ? "🥇" : state.stage === "runner-up" ? "🥈" : state.stage === "bronze" ? "🥉" : <Icon name="trophy" size={82} />}
+          </div>
+          <span className="hero-label">
+            {state.stage === "champion" ? "Новый чемпион мира"
+              : state.stage === "runner-up" ? "Серебряный призёр"
+                : state.stage === "bronze" ? "Бронзовый призёр"
+                  : state.stage === "fourth" ? "Четвёрка сильнейших" : "Турнир окончен"}
+          </span>
+          <h1>
+            {state.stage === "champion" ? `${teamName(userTeam)} — чемпион!`
+              : state.stage === "runner-up" ? `${teamName(userTeam)} — вице-чемпион!`
+                : state.stage === "bronze" ? `${teamName(userTeam)} — с бронзой!`
+                  : state.message}
+          </h1>
           <p>Матчей сыграно: {state.history?.length ?? 0}. Твой состав сохранён — можно вернуться, усилить его и начать заново.</p>
           <div className="ending-actions"><button className="secondary-button" onClick={onBackToDraft}>Изменить состав</button><button className="primary-button" onClick={onNewGame}>Выбрать другую страну</button></div>
         </section>
+      )}
+
+      {state.history?.length > 0 && (
+        <TeamLeaders history={state.history} userTeamId={userTeam.id} userPlayers={userPlayers} />
       )}
 
       {state.history?.length > 0 && (
