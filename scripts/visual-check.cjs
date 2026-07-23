@@ -4,12 +4,12 @@ const { chromium } = require("playwright");
 
 const root = path.resolve(__dirname, "..");
 const node = "C:\\Users\\kerims\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe";
-const cli = path.join(root, "node_modules", "vinext", "dist", "cli.js");
+const cli = path.join(root, "node_modules", "vite", "bin", "vite.js");
 const url = "http://127.0.0.1:4173";
 const output = "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\\019f86a8-e8f8-7a12-9bda-fcf145a7e02b\\global-cup-draft-home.png";
 const resultOutput = "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\\019f86a8-e8f8-7a12-9bda-fcf145a7e02b\\global-cup-draft-result.png";
 
-const server = spawn(node, [cli, "dev", "--hostname", "127.0.0.1", "--port", "4173"], {
+const server = spawn(node, [cli, "--host", "127.0.0.1", "--port", "4173"], {
   cwd: root,
   stdio: ["ignore", "pipe", "pipe"],
 });

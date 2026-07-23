@@ -3,21 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build && node scripts/prepare-hosting-build.mjs",
-    "start": "vinext start",
-    "check": "vinext check"
+    "dev": "vite",
+    "build": "vite build --outDir dist-spa && node scripts/prepare-static-hosting.mjs",
+    "start": "vite preview"
   },
   "dependencies": {
-    "next": "^15.5.9",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.4",
-    "@vitejs/plugin-rsc": "^0.5.6",
-    "react-server-dom-webpack": "^19.1.1",
-    "vite": "^7.1.7",
-    "vinext": "^0.0.15"
+    "vite": "^7.1.7"
   }
 }
