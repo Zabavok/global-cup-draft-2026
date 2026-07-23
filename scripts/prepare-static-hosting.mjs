@@ -25,8 +25,8 @@ const javascript = fs
 const icon = fs.readFileSync(path.join(root, "app", "icon.svg"), "utf8");
 
 html = html
-  .replace(stylesheet[0], `<style>${css}</style>`)
-  .replace(moduleScript[0], `<script type="module">${javascript}</script>`)
+  .replace(stylesheet[0], () => `<style>${css}</style>`)
+  .replace(moduleScript[0], () => `<script type="module">${javascript}</script>`)
   .replace("</head>", '<link rel="icon" href="/favicon.svg" type="image/svg+xml" /></head>');
 
 fs.rmSync(dist, { recursive: true, force: true });
