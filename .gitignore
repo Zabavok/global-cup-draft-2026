@@ -1,0 +1,6 @@
+node_modules/
+.vinext/
+dist/
+.DS_Store
+*.log
+qa-*.png
