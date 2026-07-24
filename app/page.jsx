@@ -111,7 +111,11 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
   const away = teams.find((team) => team.id === fixture.awayId);
   const opponent = home.id === userTeamId ? away : home;
   const userIsHome = home.id === userTeamId;
-  const duration = fixture.result.penalties || (knockout && Math.random() < 0.24) ? 120 : 90;
+  const duration = knockout && fixture.result.wentToExtraTime ? 120 : 90;
+  const regulationScore = [
+    fixture.result.regulationHomeGoals ?? fixture.result.homeGoals,
+    fixture.result.regulationAwayGoals ?? fixture.result.awayGoals,
+  ];
 
   function poolFor(teamId, attacking = false) {
     const source = teamId === userTeamId ? userPlayers : allPlayers.filter((player) => player.teamId === teamId);
@@ -122,13 +126,13 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
   }
 
   const events = [];
-  [[home.id, fixture.result.homeGoals], [away.id, fixture.result.awayGoals]].forEach(([teamId, goals]) => {
+  function addGoals(teamId, goals, fromMinute, toMinute) {
     for (let index = 0; index < goals; index += 1) {
       const scorer = randomItem(poolFor(teamId, true));
       const assistants = poolFor(teamId, true).filter((player) => player?.id !== scorer?.id);
       const assistant = Math.random() < 0.72 ? randomItem(assistants) : null;
       events.push({
-        minute: 4 + Math.floor(Math.random() * (duration - 7)),
+        minute: fromMinute + Math.floor(Math.random() * (toMinute - fromMinute + 1)),
         type: "goal",
         teamId,
         player: scorer?.name ?? teamName(teams.find((team) => team.id === teamId)),
@@ -136,7 +140,13 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
         detail: assistant ? `Гол · пас: ${assistant.name}` : "Гол без передачи",
       });
     }
-  });
+  }
+  addGoals(home.id, regulationScore[0], 4, 89);
+  addGoals(away.id, regulationScore[1], 4, 89);
+  if (duration === 120) {
+    addGoals(home.id, fixture.result.homeGoals - regulationScore[0], 94, 119);
+    addGoals(away.id, fixture.result.awayGoals - regulationScore[1], 94, 119);
+  }
 
   const cardCount = 1 + Math.floor(Math.random() * 4);
   for (let index = 0; index < cardCount; index += 1) {
@@ -163,7 +173,10 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
   const userOnTarget = clamp(Math.max(userGoals, Math.round(userShots * (.34 + Math.random() * .16))), userGoals, userShots);
   const opponentOnTarget = clamp(Math.max(opponentGoals, Math.round(opponentShots * (.32 + Math.random() * .16))), opponentGoals, opponentShots);
   const onTarget = userIsHome ? [userOnTarget, opponentOnTarget] : [opponentOnTarget, userOnTarget];
-  const winningTeamId = fixture.result.homeGoals >= fixture.result.awayGoals ? home.id : away.id;
+  const winningTeamId = fixture.result.homeGoals > fixture.result.awayGoals
+    || (fixture.result.homeGoals === fixture.result.awayGoals && fixture.result.penalties?.[0] > fixture.result.penalties?.[1])
+    ? home.id
+    : away.id;
   const goalEvents = events.filter((event) => event.type === "goal" && event.teamId === winningTeamId);
   const mvp = randomItem(goalEvents)?.player ?? randomItem(poolFor(winningTeamId, true))?.name ?? teamName(teams.find((team) => team.id === winningTeamId));
 
@@ -171,7 +184,7 @@ function addMatchReport(fixture, teams, allPlayers, userTeamId, userPlayers, use
     ...fixture,
     result: {
       ...fixture.result,
-      report: { duration, events, possession, shots, onTarget, mvp },
+      report: { duration, regulationScore, events, possession, shots, onTarget, mvp },
     },
   };
 }
@@ -253,6 +266,15 @@ function MatchReport({ fixture, teams, compact = false }) {
   const firstHalf = report.events.filter((event) => event.minute <= 45);
   const secondHalf = report.events.filter((event) => event.minute > 45 && event.minute <= 90);
   const extraTime = report.events.filter((event) => event.minute > 90);
+  const eventRegulationScore = [
+    [...firstHalf, ...secondHalf].filter((event) => event.type === "goal" && event.teamId === fixture.homeId).length,
+    [...firstHalf, ...secondHalf].filter((event) => event.type === "goal" && event.teamId === fixture.awayId).length,
+  ];
+  const regulationScore = report.regulationScore ?? eventRegulationScore;
+  const legacyInvalidExtraTime = report.duration === 120
+    && !fixture.result.penalties
+    && regulationScore[0] !== regulationScore[1];
+  const displayDuration = legacyInvalidExtraTime ? 90 : report.duration;
   const halfGoals = firstHalf.filter((event) => event.type === "goal");
   const halfScore = [
     halfGoals.filter((event) => event.teamId === fixture.homeId).length,
@@ -262,7 +284,7 @@ function MatchReport({ fixture, teams, compact = false }) {
     <div className={`match-report ${compact ? "compact" : ""}`}>
       <div className="report-head">
         <span>Протокол матча</span>
-        <strong>{report.duration} минут{report.duration === 120 ? " · дополнительное время" : ""}</strong>
+        <strong>{displayDuration} минут{displayDuration === 120 ? " · дополнительное время" : ""}</strong>
       </div>
       <div className="match-stats">
         {[
@@ -284,13 +306,16 @@ function MatchReport({ fixture, teams, compact = false }) {
           <div className="period-label"><span>Второй тайм</span><b>46′ — 90′</b></div>
           <MatchEventRows events={secondHalf} fixture={fixture} />
         </section>
-        {report.duration === 120 && (
+        {displayDuration === 120 && (
           <>
-            <div className="halftime-line extra"><span>Основное время завершено</span><strong>{fixture.result.homeGoals} : {fixture.result.awayGoals}</strong></div>
+            <div className="halftime-line extra"><span>Основное время завершено</span><strong>{regulationScore[0]} : {regulationScore[1]}</strong></div>
             <section className="event-period extra-time">
               <div className="period-label"><span>Дополнительное время</span><b>91′ — 120′</b></div>
               <MatchEventRows events={extraTime} fixture={fixture} />
             </section>
+            {fixture.result.penalties && (
+              <div className="halftime-line extra"><span>После дополнительного времени</span><strong>{fixture.result.homeGoals} : {fixture.result.awayGoals}</strong></div>
+            )}
           </>
         )}
       </div>

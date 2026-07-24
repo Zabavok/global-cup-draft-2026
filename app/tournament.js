@@ -33,16 +33,37 @@ export function simulateMatch(homeRating, awayRating, key, tactic = "balanced", 
   const userRisk = tactic === "attack" ? 0.23 : tactic === "defensive" ? -0.22 : 0;
   let homeGoals = goalsFor(homeRating, awayRating, random, userAttack, 0);
   let awayGoals = goalsFor(awayRating, homeRating, random, 0, userRisk);
+  const regulationHomeGoals = homeGoals;
+  const regulationAwayGoals = awayGoals;
+  let wentToExtraTime = false;
   let penalties = null;
 
   if (knockout && homeGoals === awayGoals) {
+    wentToExtraTime = true;
     const homeChance = Math.max(0.3, Math.min(0.7, 0.5 + (homeRating - awayRating) * 0.012));
-    const homeWon = random() < homeChance;
-    const loserPens = 2 + Math.floor(random() * 3);
-    penalties = homeWon ? [loserPens + 1, loserPens] : [loserPens, loserPens + 1];
+    const extraTimeOutcome = random();
+    if (extraTimeOutcome < 0.38) {
+      if (random() < homeChance) homeGoals += 1;
+      else awayGoals += 1;
+    } else if (extraTimeOutcome < 0.5) {
+      homeGoals += 1;
+      awayGoals += 1;
+    }
+    if (homeGoals === awayGoals) {
+      const homeWon = random() < homeChance;
+      const loserPens = 2 + Math.floor(random() * 3);
+      penalties = homeWon ? [loserPens + 1, loserPens] : [loserPens, loserPens + 1];
+    }
   }
 
-  return { homeGoals, awayGoals, penalties };
+  return {
+    homeGoals,
+    awayGoals,
+    regulationHomeGoals,
+    regulationAwayGoals,
+    wentToExtraTime,
+    penalties,
+  };
 }
 
 export function buildGroupFixtures(teams, userTeamId, seed) {
@@ -166,6 +187,9 @@ export function playUserFixture(fixture, teams, userTeamId, userRating, seed, ta
     : {
         homeGoals: userResult.awayGoals,
         awayGoals: userResult.homeGoals,
+        regulationHomeGoals: userResult.regulationAwayGoals,
+        regulationAwayGoals: userResult.regulationHomeGoals,
+        wentToExtraTime: userResult.wentToExtraTime,
         penalties: userResult.penalties ? [userResult.penalties[1], userResult.penalties[0]] : null,
       };
   return { ...fixture, result, tactic };
