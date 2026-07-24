@@ -78,6 +78,7 @@ const screenshotRoot = "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\
   await page.screenshot({ path: `${screenshotRoot}\\global-cup-final-champion.png`, fullPage: true });
   const champion = await page.locator(".ending-screen.champion").count();
   const watermark = await page.locator(".ending-watermark").count();
+  const endingFlagLoaded = await page.locator(".ending-flag").evaluate((image) => image.complete && image.naturalWidth > 0);
   const leaders = await page.locator(".team-leaders").count();
 
   const checksPassed = thirdPlaceHeading === 1
@@ -85,6 +86,7 @@ const screenshotRoot = "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\
     && medalEnding === 1
     && champion === 1
     && watermark === 1
+    && endingFlagLoaded
     && leaders === 1
     && errors.length === 0;
 
@@ -94,6 +96,7 @@ const screenshotRoot = "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\
     medalEnding,
     champion,
     watermark,
+    endingFlagLoaded,
     leaders,
     errors,
     checksPassed,

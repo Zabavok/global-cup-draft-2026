@@ -12,9 +12,13 @@ import {
   winnerOf,
 } from "./tournament";
 
-const BUDGET = 120;
 const MAX_PER_TEAM = 3;
 const STORAGE_KEY = "global-cup-draft-v3";
+const difficulties = {
+  easy: { title: "Лёгкая", budget: 200, icon: "●", text: "Можно собрать почти звёздный состав" },
+  normal: { title: "Обычная", budget: 120, icon: "◆", text: "Нужно выбирать между ценой и силой" },
+  hard: { title: "Сложная", budget: 85, icon: "▲", text: "Каждый потраченный миллион важен" },
+};
 
 const formations = {
   "4-3-3": [
@@ -76,8 +80,14 @@ const tactics = {
   defensive: { title: "Оборона", text: "Надёжнее сзади", icon: "▼" },
 };
 
-function flag(code) {
-  return [...(flagIso[code] ?? "UN")].map((letter) => String.fromCodePoint(127397 + letter.charCodeAt())).join("");
+function flagAsset(code) {
+  if (code === "SCO") return "gb-sct";
+  if (code === "ENG") return "gb-eng";
+  return (flagIso[code] ?? "un").toLowerCase();
+}
+
+function Flag({ code, className = "" }) {
+  return <img className={`flag-image ${className}`} src={`./flags/${flagAsset(code)}.png`} alt="" loading="lazy" />;
 }
 
 function teamName(team) {
@@ -206,9 +216,9 @@ function Scoreline({ fixture, teams }) {
   const result = fixture.result;
   return (
     <div className="scoreline">
-      <span>{flag(home.code)} {teamName(home)}</span>
+      <span><Flag code={home.code} /> {teamName(home)}</span>
       <strong>{result ? `${result.homeGoals} : ${result.awayGoals}` : "— : —"}</strong>
-      <span>{teamName(away)} {flag(away.code)}</span>
+      <span>{teamName(away)} <Flag code={away.code} /></span>
       {result?.penalties && <small>пен. {result.penalties[0]}:{result.penalties[1]}</small>}
     </div>
   );
@@ -279,7 +289,7 @@ function MatchReport({ fixture, teams, compact = false }) {
   );
 }
 
-function NationSelect({ onSelect }) {
+function NationSelect({ difficulty, onDifficulty, onSelect }) {
   const [query, setQuery] = useState("");
   const teams = gameData.teams.filter((team) => `${teamName(team)} ${team.code}`.toLowerCase().includes(query.toLowerCase()));
   return (
@@ -289,12 +299,24 @@ function NationSelect({ onSelect }) {
         <span className="hero-label">Шаг 1 из 3 · выбери путь</span>
         <h1>За какую сборную<br /><em>ты возьмёшь кубок?</em></h1>
         <p>Выбери любую из 48 стран. Потом соберёшь для неё звёздный состав и сыграешь все матчи — от группы до финала.</p>
+        <div className="difficulty-picker">
+          <span>Сложность и бюджет</span>
+          <div>
+            {Object.entries(difficulties).map(([id, item]) => (
+              <button className={difficulty === id ? "active" : ""} key={id} onClick={() => onDifficulty(id)}>
+                <i>{item.icon}</i>
+                <span><strong>{item.title}</strong><small>{item.text}</small></span>
+                <b>{item.budget} млн</b>
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="nation-search"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Найти сборную" /></label>
       </section>
       <section className="nation-grid">
         {teams.map((team) => (
           <button className="nation-card" key={team.id} onClick={() => onSelect(team.id)}>
-            <span className="nation-flag">{flag(team.code)}</span>
+            <span className="nation-flag"><Flag code={team.code} /></span>
             <span><strong>{teamName(team)}</strong><small>Группа {team.group} · сила {team.rating}</small></span>
             <b>{team.code}</b><Icon name="arrow" />
           </button>
@@ -322,7 +344,7 @@ function CoachPicker({ currentId, onChoose, onClose }) {
           {teams.map((team) => (
             <button className={currentId === team.coach.id ? "selected" : ""} key={team.coach.id} onClick={() => { onChoose(team.coach.id); onClose(); }}>
               <span className="coach-avatar">{initials(team.coach.name)}</span>
-              <span><strong>{team.coach.name}</strong><small>{flag(team.code)} {teamName(team)}</small></span>
+              <span><strong>{team.coach.name}</strong><small><Flag code={team.code} /> {teamName(team)}</small></span>
               <span className="coach-rating"><small>Рейтинг</small><b>{team.coach.rating}</b></span>
               <em>{team.coach.price} млн</em>
               {currentId === team.coach.id ? <Icon name="check" /> : <Icon name="arrow" />}
@@ -342,7 +364,7 @@ function ResultModal({ score, formation, spent, coach, nation, onClose, onStart 
         <span className="hero-label">Состав готов</span>
         <div className="result-score"><span>{score.total}</span><small>/100</small></div>
         <h2>Пора на чемпионат мира</h2>
-        <p>{flag(nation.code)} {teamName(nation)} · схема {formation} · тренер {coach.name}. Потрачено {formatMoney(spent)}.</p>
+        <p><Flag code={nation.code} /> {teamName(nation)} · схема {formation} · тренер {coach.name}. Потрачено {formatMoney(spent)}.</p>
         <div className="score-breakdown">
           {[["Качество игроков", score.quality], ["Связи и тренер", score.chemistry], ["Баланс состава", score.balance]].map(([label, value]) => (
             <div key={label}><span>{label}<em>{value}</em></span><i><u style={{ width: `${value}%` }} /></i></div>
@@ -555,7 +577,7 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
     <main className="tournament-shell">
       <header className="topbar">
         <Brand />
-        <div className="topbar-note">{flag(userTeam.code)} {teamName(userTeam)} · сила состава {userRating}</div>
+        <div className="topbar-note"><Flag code={userTeam.code} /> {teamName(userTeam)} · сила состава {userRating}</div>
         <button className="ghost-button" onClick={onBackToDraft}>Вернуться к составу</button>
       </header>
 
@@ -578,9 +600,9 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
                 : state.stage === "third-place" ? "Последний матч · борьба за бронзу" : state.round.name}
             </span>
             <div className="versus">
-              <div><span>{flag(userTeam.code)}</span><strong>{teamName(userTeam)}</strong><small>Твой состав · {userRating}</small></div>
+              <div><span><Flag code={userTeam.code} className="versus-flag" /></span><strong>{teamName(userTeam)}</strong><small>Твой состав · {userRating}</small></div>
               <b>VS</b>
-              <div><span>{flag(opponent.code)}</span><strong>{teamName(opponent)}</strong><small>Сила сборной · {opponent.rating}</small></div>
+              <div><span><Flag code={opponent.code} className="versus-flag" /></span><strong>{teamName(opponent)}</strong><small>Сила сборной · {opponent.rating}</small></div>
             </div>
             <h2>Выбери план на матч</h2>
             <div className="tactic-grid">
@@ -673,7 +695,7 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
 
       {["eliminated", "champion", "runner-up", "bronze", "fourth"].includes(state.stage) && (
         <section className={`ending-screen ${state.stage}`}>
-          <div className="ending-watermark" aria-hidden="true"><strong>{flag(userTeam.code)}</strong><span>{teamName(userTeam)}</span></div>
+          <div className="ending-watermark" aria-hidden="true"><Flag code={userTeam.code} className="ending-flag" /><span>{teamName(userTeam)}</span></div>
           <div className="ending-cup">
             {state.stage === "champion" ? "🥇" : state.stage === "runner-up" ? "🥈" : state.stage === "bronze" ? "🥉" : <Icon name="trophy" size={82} />}
           </div>
@@ -716,7 +738,7 @@ function GroupTable({ rows = [], teams, userId }) {
         const team = teams.find((item) => item.id === row.teamId);
         return (
           <div className={row.teamId === userId ? "user" : ""} key={row.teamId}>
-            <em>{index + 1}</em><span>{flag(team.code)} {teamName(team)}</span><b>{row.played}</b><b>{row.gd > 0 ? `+${row.gd}` : row.gd}</b><strong>{row.points}</strong>
+            <em>{index + 1}</em><span><Flag code={team.code} /> {teamName(team)}</span><b>{row.played}</b><b>{row.gd > 0 ? `+${row.gd}` : row.gd}</b><strong>{row.points}</strong>
           </div>
         );
       })}
@@ -730,6 +752,7 @@ export default function DraftGame() {
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [coachId, setCoachId] = useState("");
   const [selectedNationId, setSelectedNationId] = useState(null);
+  const [difficulty, setDifficulty] = useState("normal");
   const [query, setQuery] = useState("");
   const [position, setPosition] = useState("ALL");
   const [teamId, setTeamId] = useState("ALL");
@@ -747,8 +770,10 @@ export default function DraftGame() {
   const coachTeam = gameData.teams.find((team) => team.coach.id === coachId);
   const coach = coachTeam?.coach;
   const selectedNation = gameData.teams.find((team) => team.id === selectedNationId);
+  const difficultyConfig = difficulties[difficulty] ?? difficulties.normal;
+  const budget = difficultyConfig.budget;
   const spent = selectedPlayers.reduce((sum, player) => sum + player.price, 0) + (coach?.price ?? 0);
-  const remaining = BUDGET - spent;
+  const remaining = budget - spent;
   const nationCounts = selectedPlayers.reduce((counts, player) => {
     counts[player.teamId] = (counts[player.teamId] ?? 0) + 1;
     return counts;
@@ -775,6 +800,7 @@ export default function DraftGame() {
       if (saved?.squad) setSquad(saved.squad);
       if (saved?.coachId) setCoachId(saved.coachId);
       if (saved?.selectedNationId) setSelectedNationId(saved.selectedNationId);
+      if (saved?.difficulty && difficulties[saved.difficulty]) setDifficulty(saved.difficulty);
       if (saved?.tournament) setTournament(saved.tournament);
     } catch {
       localStorage.removeItem(STORAGE_KEY);
@@ -784,8 +810,8 @@ export default function DraftGame() {
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ formation, squad, coachId, selectedNationId, tournament }));
-  }, [formation, squad, coachId, selectedNationId, tournament, hydrated]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ formation, squad, coachId, selectedNationId, difficulty, tournament }));
+  }, [formation, squad, coachId, selectedNationId, difficulty, tournament, hydrated]);
 
   useEffect(() => setLimit(72), [query, position, teamId, sort]);
   useEffect(() => {
@@ -824,7 +850,7 @@ export default function DraftGame() {
     const countWithoutReplaced = (nationCounts[player.teamId] ?? 0) - (replaced?.teamId === player.teamId ? 1 : 0);
     if (chosenIds.has(player.id) && squad[slotId] !== player.id) return setNotice("Этот игрок уже есть в составе");
     if (countWithoutReplaced >= MAX_PER_TEAM) return setNotice(`Не больше ${MAX_PER_TEAM} игроков одной сборной`);
-    if (nextSpent > BUDGET) return setNotice(`Не хватает ${formatMoney(nextSpent - BUDGET)}`);
+    if (nextSpent > budget) return setNotice(`Не хватает ${formatMoney(nextSpent - budget)}`);
     setSquad((current) => ({ ...current, [slotId]: player.id }));
     const nextEmpty = slots.find(([id, slotPosition]) => slotPosition === player.position && !squad[id] && id !== slotId);
     setSelectedSlot(nextEmpty?.[0] ?? null);
@@ -838,7 +864,7 @@ export default function DraftGame() {
   function selectCoach(nextCoachId) {
     const nextTeam = gameData.teams.find((team) => team.coach.id === nextCoachId);
     const nextSpent = selectedPlayers.reduce((sum, player) => sum + player.price, 0) + (nextTeam?.coach.price ?? 0);
-    if (nextSpent > BUDGET) return setNotice("Этот тренер не помещается в бюджет");
+    if (nextSpent > budget) return setNotice("Этот тренер не помещается в бюджет");
     setCoachId(nextCoachId);
   }
 
@@ -853,16 +879,32 @@ export default function DraftGame() {
       const remainingSlots = slots.slice(slotIndex + 1);
       const candidates = gameData.players
         .filter((player) => player.position === wantedPosition && !used.has(player.id) && (counts[player.teamId] ?? 0) < MAX_PER_TEAM)
-        .sort((a, b) => (b.rating - b.price * 0.72) - (a.rating - a.price * 0.72));
+        .sort((a, b) => {
+          const priceWeight = difficulty === "easy" ? 0.12 : difficulty === "hard" ? 1.05 : 0.72;
+          return (b.rating - b.price * priceWeight) - (a.rating - a.price * priceWeight);
+        });
       const pick = candidates.find((candidate) => {
-        const minimumRest = remainingSlots.reduce((sum, [, pos]) => {
+        const futureUsed = new Set([...used, candidate.id]);
+        const futureCounts = { ...counts, [candidate.teamId]: (counts[candidate.teamId] ?? 0) + 1 };
+        let minimumRest = 0;
+        for (const [, futurePosition] of remainingSlots) {
           const cheapest = gameData.players
-            .filter((player) => player.position === pos && !used.has(player.id) && player.id !== candidate.id)
-            .reduce((minimum, player) => Math.min(minimum, player.price), 99);
-          return sum + cheapest;
-        }, 0);
-        return total + candidate.price + minimumRest <= BUDGET;
-      }) ?? candidates.sort((a, b) => a.price - b.price)[0];
+            .filter((player) =>
+              player.position === futurePosition
+              && !futureUsed.has(player.id)
+              && (futureCounts[player.teamId] ?? 0) < MAX_PER_TEAM
+            )
+            .sort((a, b) => a.price - b.price)[0];
+          if (!cheapest) {
+            minimumRest = Number.POSITIVE_INFINITY;
+            break;
+          }
+          minimumRest += cheapest.price;
+          futureUsed.add(cheapest.id);
+          futureCounts[cheapest.teamId] = (futureCounts[cheapest.teamId] ?? 0) + 1;
+        }
+        return total + candidate.price + minimumRest <= budget;
+      });
       if (pick) {
         nextSquad[slotId] = pick.id;
         counts[pick.teamId] = (counts[pick.teamId] ?? 0) + 1;
@@ -889,13 +931,14 @@ export default function DraftGame() {
     setCoachId("");
     setSelectedSlot(null);
     setSelectedNationId(null);
+    setDifficulty("normal");
     setTournament(null);
     setShowResult(false);
     localStorage.removeItem(STORAGE_KEY);
   }
 
   if (!hydrated) return <main className="loading-screen"><Brand /><span>Загружаем турнир…</span></main>;
-  if (!selectedNation) return <NationSelect onSelect={(id) => setSelectedNationId(id)} />;
+  if (!selectedNation) return <NationSelect difficulty={difficulty} onDifficulty={setDifficulty} onSelect={(id) => setSelectedNationId(id)} />;
   if (tournament) return (
     <Tournament
       state={tournament}
@@ -914,18 +957,18 @@ export default function DraftGame() {
     <main className="game-shell">
       <header className="topbar">
         <Brand />
-        <div className="topbar-note">{flag(selectedNation.code)} Ты играешь за {teamName(selectedNation)} · группа {selectedNation.group}</div>
+        <div className="topbar-note"><Flag code={selectedNation.code} /> Ты играешь за {teamName(selectedNation)} · {difficultyConfig.title.toLowerCase()} сложность</div>
         <div className="top-actions"><button className="ghost-button" onClick={resetAll}>Другая страна</button><button className="score-pill" onClick={() => complete && setShowResult(true)}><span>Сила</span><strong>{complete ? userRating : "—"}</strong></button></div>
       </header>
 
       <section className="hero" id="top">
         <div className="eyebrow"><span>Шаг 2 из 3 · собери состав</span><b>48 сборных · 1 248 игроков</b></div>
         <div className="hero-row">
-          <div><h1>Собери команду,<br /><em>а потом выиграй ЧМ.</em></h1><p>У тебя 120 млн на 11 игроков и тренера. После драфта ты сыграешь группу и весь плей-офф за {teamName(selectedNation)}.</p></div>
+          <div><h1>Собери команду,<br /><em>а потом выиграй ЧМ.</em></h1><p>У тебя {budget} млн на 11 игроков и тренера. Сложность: {difficultyConfig.title.toLowerCase()}. После драфта ты сыграешь группу и весь плей-офф за {teamName(selectedNation)}.</p></div>
           <div className="budget-card">
-            <div className="budget-head"><span><Icon name="wallet" /> Осталось</span><small>из {BUDGET} млн</small></div>
+            <div className="budget-head"><span><Icon name="wallet" /> Осталось</span><small>{difficultyConfig.title} · из {budget} млн</small></div>
             <strong>{formatMoney(Math.max(0, remaining))}</strong>
-            <div className="budget-track"><i style={{ width: `${Math.min(100, (spent / BUDGET) * 100)}%` }} /></div>
+            <div className="budget-track"><i style={{ width: `${Math.min(100, (spent / budget) * 100)}%` }} /></div>
             <div className="budget-foot"><span>Потрачено {formatMoney(spent)}</span><span>{selectedPlayers.length}/11 игроков</span></div>
           </div>
         </div>
@@ -952,7 +995,7 @@ export default function DraftGame() {
 
           <button className="coach-card" onClick={() => setShowCoachPicker(true)}>
             <span className="coach-icon"><Icon name="users" size={22} /></span>
-            <span className="coach-copy"><small>Главный тренер</small><strong>{coach?.name ?? "Нажми и выбери тренера"}</strong>{coachTeam && <span>{flag(coachTeam.code)} {teamName(coachTeam)} · рейтинг {coach.rating}</span>}</span>
+            <span className="coach-copy"><small>Главный тренер</small><strong>{coach?.name ?? "Нажми и выбери тренера"}</strong>{coachTeam && <span><Flag code={coachTeam.code} /> {teamName(coachTeam)} · рейтинг {coach.rating}</span>}</span>
             <span className="coach-action">{coach ? `${coach.price} млн` : "48 тренеров"} <Icon name="arrow" /></span>
           </button>
 
@@ -979,7 +1022,7 @@ export default function DraftGame() {
                 return (
                   <button className={`player-row ${chosen ? "chosen" : ""}`} disabled={chosen} key={player.id} onClick={() => addPlayer(player)}>
                     <span className={`rating-badge ${ratingTone(player.rating)}`}>{player.rating}</span><span className="player-avatar">{initials(player.name)}</span>
-                    <span className="player-main"><strong>{player.name}</strong><small>{flag(player.code)} {teamName(gameData.teams.find((team) => team.id === player.teamId))} · {player.club}</small></span>
+                    <span className="player-main"><strong>{player.name}</strong><small><Flag code={player.code} /> {teamName(gameData.teams.find((team) => team.id === player.teamId))} · {player.club}</small></span>
                     <span className="position-tag">{shortPositionNames[player.position]}</span><span className="player-price">{player.price} млн</span><span className="add-state">{chosen ? "✓" : "+"}</span>
                   </button>
                 );
@@ -990,7 +1033,7 @@ export default function DraftGame() {
         </aside>
       </section>
 
-      <section className="rules-strip"><span>Правила драфта</span><p><b>120</b>млн бюджет</p><p><b>11+1</b>игроки и тренер</p><p><b>≤ 3</b>из одной сборной</p><p><b>8</b>матчей до кубка</p></section>
+      <section className="rules-strip"><span>Правила драфта</span><p><b>{budget}</b>млн бюджет</p><p><b>11+1</b>игроки и тренер</p><p><b>≤ 3</b>из одной сборной</p><p><b>8</b>матчей до кубка</p></section>
       <footer><Brand /><p>Фанатский проект. Не связан с FIFA или EA SPORTS.</p><button onClick={resetAll}>Начать сначала</button></footer>
       {showCoachPicker && <CoachPicker currentId={coachId} onChoose={selectCoach} onClose={() => setShowCoachPicker(false)} />}
       {showResult && <ResultModal score={score} formation={formation} spent={spent} coach={coach} nation={selectedNation} onClose={() => setShowResult(false)} onStart={startTournament} />}
