@@ -181,6 +181,13 @@ function initials(name) {
   return `${parts[0]?.[0] ?? ""}${parts.at(-1)?.[0] ?? ""}`.toUpperCase();
 }
 
+function shortPlayerName(name = "") {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 2) return name;
+  const firstAndLast = `${parts[0]} ${parts.at(-1)}`;
+  return firstAndLast.length <= 25 ? firstAndLast : `${parts[0][0]}. ${parts.at(-1)}`;
+}
+
 function ratingTone(rating) {
   if (rating >= 89) return "elite";
   if (rating >= 83) return "strong";
@@ -230,7 +237,10 @@ function MatchEventRows({ events, fixture }) {
     <div className={event.teamId === fixture.homeId ? "home-event" : "away-event"} key={`${event.minute}-${event.player}-${index}`}>
       <time>{event.minute}′</time>
       <i>{event.type === "goal" ? "⚽" : event.type === "red" ? "🟥" : "🟨"}</i>
-      <span><strong>{event.player}</strong><small>{event.detail}</small></span>
+      <span>
+        <strong title={event.player}>{shortPlayerName(event.player)}</strong>
+        <small>{event.type === "goal" && event.assistant ? `Гол · пас: ${shortPlayerName(event.assistant)}` : event.detail}</small>
+      </span>
     </div>
   ));
 }
@@ -284,7 +294,7 @@ function MatchReport({ fixture, teams, compact = false }) {
           </>
         )}
       </div>
-      <div className="mvp-line"><span>⭐ Игрок матча</span><strong>{report.mvp}</strong></div>
+      <div className="mvp-line"><span>⭐ Игрок матча</span><strong title={report.mvp}>{shortPlayerName(report.mvp)}</strong></div>
     </div>
   );
 }
@@ -422,7 +432,7 @@ function TeamLeaders({ history, userTeamId, userPlayers }) {
         {leaders.map((player, index) => (
           <div key={player.name}>
             <em>{index + 1}</em>
-            <span>{player.name}</span>
+            <span title={player.name}>{shortPlayerName(player.name)}</span>
             <strong>{player.goals}</strong>
             <strong>{player.assists}</strong>
             <small>{player.yellow ? `🟨 ${player.yellow}` : ""}{player.red ? `  🟥 ${player.red}` : ""}{!player.yellow && !player.red ? "—" : ""}</small>
