@@ -56,13 +56,34 @@ const { chromium } = require("playwright");
   await page.getByRole("button", { name: /Оценить и играть/ }).click();
   await page.getByRole("button", { name: /Начать чемпионат/ }).click();
   await page.getByRole("button", { name: /Сыграть матч/ }).click();
+  await page.evaluate(() => {
+    const key = "global-cup-draft-v3";
+    const saved = JSON.parse(localStorage.getItem(key));
+    const fixture = saved.tournament.history.at(-1);
+    fixture.result.report.events[0] = {
+      minute: 26,
+      type: "goal",
+      teamId: fixture.awayId,
+      player: "Mohamed Mahran Mahmoud Salah",
+      assistant: "Charles Marc De Ketelaere",
+      detail: "Гол · пас: Charles Marc De Ketelaere",
+    };
+    localStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload({ waitUntil: "networkidle" });
   const eventNameStyle = await page.locator(".event-period > div:not(.period-label) span strong").first().evaluate((element) => {
     const style = getComputedStyle(element);
     return {
       whiteSpace: style.whiteSpace,
-      overflowWrap: style.overflowWrap,
+      overflow: style.overflow,
+      text: element.textContent,
+      hasLineBreak: element.getBoundingClientRect().height > Number.parseFloat(style.lineHeight) * 1.5,
       visible: element.getBoundingClientRect().height > 0,
     };
+  });
+  await page.screenshot({
+    path: "C:\\Users\\kerims\\.codex\\visualizations\\2026\\07\\21\\019f86a8-e8f8-7a12-9bda-fcf145a7e02b\\global-cup-short-names.png",
+    fullPage: true,
   });
 
   const checksPassed = results.every((result) =>
@@ -72,8 +93,10 @@ const { chromium } = require("playwright");
     && result.rating >= 78
   )
     && flagsLoaded
-    && eventNameStyle.whiteSpace === "normal"
-    && eventNameStyle.overflowWrap === "anywhere"
+    && eventNameStyle.whiteSpace === "nowrap"
+    && eventNameStyle.overflow === "hidden"
+    && eventNameStyle.text === "Mohamed Salah"
+    && !eventNameStyle.hasLineBreak
     && eventNameStyle.visible
     && errors.length === 0;
 
