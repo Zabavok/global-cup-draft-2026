@@ -306,9 +306,12 @@ function MatchReport({ fixture, teams, compact = false }) {
           <div className="period-label"><span>Второй тайм</span><b>46′ — 90′</b></div>
           <MatchEventRows events={secondHalf} fixture={fixture} />
         </section>
+        <div className="halftime-line extra">
+          <span>Основное время завершено</span>
+          <strong>{regulationScore[0]} : {regulationScore[1]}</strong>
+        </div>
         {displayDuration === 120 && (
           <>
-            <div className="halftime-line extra"><span>Основное время завершено</span><strong>{regulationScore[0]} : {regulationScore[1]}</strong></div>
             <section className="event-period extra-time">
               <div className="period-label"><span>Дополнительное время</span><b>91′ — 120′</b></div>
               <MatchEventRows events={extraTime} fixture={fixture} />
@@ -414,10 +417,33 @@ function ResultModal({ score, formation, spent, coach, nation, onClose, onStart 
   );
 }
 
-function tournamentPlayerStats(allPlayers, userPlayers, history, userTeamId, podium) {
+function seededNumber(seed, key) {
+  const input = `${seed}-${key}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  hash += 0x6D2B79F5;
+  let number = hash;
+  number = Math.imul(number ^ (number >>> 15), number | 1);
+  number ^= number + Math.imul(number ^ (number >>> 7), number | 61);
+  return ((number ^ (number >>> 14)) >>> 0) / 4294967296;
+}
+
+function tournamentPlayerStats(allPlayers, userPlayers, state, teams, userTeamId, podium) {
+  const history = state.history ?? [];
   const userNames = new Set(userPlayers.map((player) => player.name));
   const live = new Map(userPlayers.map((player) => [player.name, { goals: 0, assists: 0, yellow: 0, red: 0 }]));
+  let userCleanSheets = 0;
+  let userConceded = 0;
+  let userShotsOnTargetAgainst = 0;
   history.forEach((fixture) => {
+    const userIsHome = fixture.homeId === userTeamId;
+    const opponentGoals = userIsHome ? fixture.result?.awayGoals : fixture.result?.homeGoals;
+    if (opponentGoals === 0) userCleanSheets += 1;
+    userConceded += opponentGoals ?? 0;
+    userShotsOnTargetAgainst += fixture.result?.report?.onTarget?.[userIsHome ? 1 : 0] ?? opponentGoals ?? 0;
     fixture.result?.report?.events?.forEach((event) => {
       if (event.teamId !== userTeamId) return;
       if (!live.has(event.player)) live.set(event.player, { goals: 0, assists: 0, yellow: 0, red: 0 });
@@ -433,20 +459,75 @@ function tournamentPlayerStats(allPlayers, userPlayers, history, userTeamId, pod
   });
 
   const placementBonus = new Map(podium.map((team, index) => [team.id, [7, 4, 2][index]]));
+  const semifinalRound = [...(state.completedRounds ?? []), state.round].find((round) => round?.index === 3);
+  const semifinalists = new Set(semifinalRound?.matches?.flatMap((match) => [match.homeId, match.awayId]) ?? podium.map((team) => team.id));
+  const qualifiers = new Set(state.qualifiers ?? []);
+  const teamGames = (teamId) => {
+    if (placementBonus.has(teamId)) return 8;
+    if (semifinalists.has(teamId)) return 8;
+    if (qualifiers.has(teamId)) return 4 + Math.floor(seededNumber(state.seed, `games-${teamId}`) * 4);
+    return 3;
+  };
+
   return allPlayers.map((player) => {
     const drafted = userNames.has(player.name);
     const liveStats = live.get(player.name);
     const teamId = drafted ? userTeamId : player.teamId;
-    const goals = drafted ? (liveStats?.goals ?? 0) : (player.tournamentGoals ?? 0);
-    const assists = drafted ? (liveStats?.assists ?? 0) : (player.assists ?? 0);
+    const games = drafted ? history.length : teamGames(teamId);
+    const scoringRoll = seededNumber(state.seed, `goals-${player.id}`);
+    const assistRoll = seededNumber(state.seed, `assists-${player.id}`);
+    const formRoll = seededNumber(state.seed, `form-${player.id}`);
+    const breakthroughRoll = seededNumber(state.seed, `young-${player.id}`);
+    const ratingFactor = clamp((player.rating - 68) / 24, 0.08, 1);
+    const goalRate = player.position === "FWD"
+      ? 0.16 + ratingFactor * 0.56
+      : player.position === "MID" ? 0.05 + ratingFactor * 0.28 : player.position === "DEF" ? ratingFactor * 0.08 : 0;
+    const assistRate = player.position === "MID"
+      ? 0.1 + ratingFactor * 0.34
+      : player.position === "FWD" ? 0.06 + ratingFactor * 0.25 : player.position === "DEF" ? ratingFactor * 0.1 : 0;
+    const goals = drafted
+      ? (liveStats?.goals ?? 0)
+      : clamp(Math.round(games * goalRate + scoringRoll * 3.2 - 1.5), 0, 11);
+    const assists = drafted
+      ? (liveStats?.assists ?? 0)
+      : clamp(Math.round(games * assistRate + assistRoll * 2.5 - 1.2), 0, 8);
+    const team = teams.find((item) => item.id === teamId);
+    const teamStrength = drafted ? 84 : team?.rating ?? 76;
+    const cleanSheets = drafted
+      ? userCleanSheets
+      : player.position === "GK"
+        ? clamp(Math.round(games * (0.18 + (teamStrength - 72) * 0.018) + formRoll * 2 - .8), 0, games)
+        : 0;
+    const conceded = drafted
+      ? userConceded
+      : player.position === "GK"
+        ? clamp(Math.round(games * (1.35 - (teamStrength - 72) * .025) + (1 - formRoll) * 2), 1, 18)
+        : 0;
+    const saves = drafted
+      ? Math.max(0, userShotsOnTargetAgainst - userConceded)
+      : player.position === "GK" ? Math.round(games * (2.2 + formRoll * 1.8)) : 0;
+    const savePercentage = player.position === "GK" && saves + conceded > 0
+      ? Math.round((saves / (saves + conceded)) * 100)
+      : 0;
+    const tournamentForm = (formRoll - .5) * 5;
     return {
       ...player,
+      drafted,
       teamId,
+      games,
       goals,
       assists,
       yellow: liveStats?.yellow ?? 0,
       red: liveStats?.red ?? 0,
-      awardScore: player.rating + goals * 2.8 + assists * 1.7 + (placementBonus.get(teamId) ?? 0),
+      cleanSheets,
+      conceded,
+      saves,
+      savePercentage,
+      awardScore: player.rating * .7 + goals * 4.8 + assists * 2.4 + (placementBonus.get(teamId) ?? 0) + tournamentForm,
+      youngScore: player.rating * .3 + goals * 2.5 + assists * 1.8 + (placementBonus.get(teamId) ?? 0) * .7 + breakthroughRoll * 28,
+      gloveScore: player.position === "GK"
+        ? cleanSheets * 5 + savePercentage * .34 - conceded * .45 + (placementBonus.get(teamId) ?? 0) + player.rating * .12
+        : 0,
     };
   });
 }
@@ -488,7 +569,7 @@ function resolveTournamentPodium(state, teams, userTeamId, userRating) {
 function TournamentHonours({ state, teams, allPlayers, userPlayers, userTeam, userRating }) {
   const podium = resolveTournamentPodium(state, teams, userTeam.id, userRating);
   if (podium.length < 3) return null;
-  const stats = tournamentPlayerStats(allPlayers, userPlayers, state.history ?? [], userTeam.id, podium);
+  const stats = tournamentPlayerStats(allPlayers, userPlayers, state, teams, userTeam.id, podium);
   const teamFor = (player) => teams.find((team) => team.id === player?.teamId);
   const ball = [...stats].filter((player) => player.position !== "GK")
     .sort((a, b) => b.awardScore - a.awardScore || b.goals - a.goals || b.rating - a.rating)
@@ -496,11 +577,19 @@ function TournamentHonours({ state, teams, allPlayers, userPlayers, userTeam, us
   const boot = [...stats].filter((player) => player.position !== "GK")
     .sort((a, b) => b.goals - a.goals || b.assists - a.assists || b.rating - a.rating)
     .slice(0, 3);
-  const glove = [...stats].filter((player) => player.position === "GK")
-    .sort((a, b) => b.awardScore - a.awardScore || b.rating - a.rating)[0];
-  const youngNames = /yamal|cubarsi|estevao|endrick|guler|yildiz|zaire-emery|mainoo|barco|echeverri/i;
-  const young = [...stats].filter((player) => youngNames.test(player.name))
-    .sort((a, b) => b.awardScore - a.awardScore || b.rating - a.rating)[0] ?? ball[0];
+  const startingGoalkeepers = new Map();
+  [...stats].filter((player) => player.position === "GK" && !player.drafted)
+    .sort((a, b) => b.rating - a.rating)
+    .forEach((player) => {
+      if (!startingGoalkeepers.has(player.teamId)) startingGoalkeepers.set(player.teamId, player.id);
+    });
+  const glove = [...stats].filter((player) =>
+    player.position === "GK" && (player.drafted || startingGoalkeepers.get(player.teamId) === player.id)
+  )
+    .sort((a, b) => b.gloveScore - a.gloveScore || b.savePercentage - a.savePercentage || b.rating - a.rating)[0];
+  const youngNames = ["lamine yamal", "pau cubarsi", "estevao", "felipe endrick", "arda guler", "kenan yildiz", "zaire-emery", "kobbie boateng mainoo", "valentin barco", "echeverri"];
+  const young = [...stats].filter((player) => youngNames.some((name) => player.name.toLowerCase().includes(name)))
+    .sort((a, b) => b.youngScore - a.youngScore || b.rating - a.rating)[0] ?? ball[0];
   const seededDiscipline = (team) => Math.abs(((Number(state.seed) || 1) + team.id * 29) % 11);
   const userCards = (state.history ?? []).reduce((sum, fixture) => sum + (fixture.result?.report?.events ?? [])
     .filter((event) => event.teamId === userTeam.id && (event.type === "yellow" || event.type === "red"))
@@ -560,11 +649,11 @@ function TournamentHonours({ state, teams, allPlayers, userPlayers, userTeam, us
         </article>
         <article className="award-card">
           <span className="award-icon">🧤</span><small>adidas Golden Glove</small>
-          <AwardPlayer player={glove} /><em>Лучший вратарь</em>
+          <AwardPlayer player={glove} /><em>{glove.cleanSheets} сухих матчей · {glove.savePercentage}% отражённых ударов</em>
         </article>
         <article className="award-card">
           <span className="award-icon">🌟</span><small>FIFA Young Player Award</small>
-          <AwardPlayer player={young} /><em>Лучший молодой игрок</em>
+          <AwardPlayer player={young} /><em>{young.goals} голов · {young.assists} передач</em>
         </article>
         <article className="award-card fair-play">
           <span className="award-icon">🤝</span><small>FIFA Fair Play Trophy</small>
