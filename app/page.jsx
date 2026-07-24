@@ -414,6 +414,173 @@ function ResultModal({ score, formation, spent, coach, nation, onClose, onStart 
   );
 }
 
+function tournamentPlayerStats(allPlayers, userPlayers, history, userTeamId, podium) {
+  const userNames = new Set(userPlayers.map((player) => player.name));
+  const live = new Map(userPlayers.map((player) => [player.name, { goals: 0, assists: 0, yellow: 0, red: 0 }]));
+  history.forEach((fixture) => {
+    fixture.result?.report?.events?.forEach((event) => {
+      if (event.teamId !== userTeamId) return;
+      if (!live.has(event.player)) live.set(event.player, { goals: 0, assists: 0, yellow: 0, red: 0 });
+      const item = live.get(event.player);
+      if (event.type === "goal") item.goals += 1;
+      if (event.type === "yellow") item.yellow += 1;
+      if (event.type === "red") item.red += 1;
+      if (event.assistant) {
+        if (!live.has(event.assistant)) live.set(event.assistant, { goals: 0, assists: 0, yellow: 0, red: 0 });
+        live.get(event.assistant).assists += 1;
+      }
+    });
+  });
+
+  const placementBonus = new Map(podium.map((team, index) => [team.id, [7, 4, 2][index]]));
+  return allPlayers.map((player) => {
+    const drafted = userNames.has(player.name);
+    const liveStats = live.get(player.name);
+    const teamId = drafted ? userTeamId : player.teamId;
+    const goals = drafted ? (liveStats?.goals ?? 0) : (player.tournamentGoals ?? 0);
+    const assists = drafted ? (liveStats?.assists ?? 0) : (player.assists ?? 0);
+    return {
+      ...player,
+      teamId,
+      goals,
+      assists,
+      yellow: liveStats?.yellow ?? 0,
+      red: liveStats?.red ?? 0,
+      awardScore: player.rating + goals * 2.8 + assists * 1.7 + (placementBonus.get(teamId) ?? 0),
+    };
+  });
+}
+
+function resolveTournamentPodium(state, teams, userTeamId, userRating) {
+  const strength = (teamId) => teamId === userTeamId ? userRating : teams.find((team) => team.id === teamId)?.rating ?? 70;
+  const makeFixture = (homeId, awayId, key) => ({
+    id: key,
+    homeId,
+    awayId,
+    result: simulateMatch(strength(homeId), strength(awayId), `${state.seed}-${key}`, "balanced", true),
+  });
+
+  let finalFixture = state.finalFixture ?? (state.round?.index === 4 ? state.round.matches[0] : null);
+  if (!finalFixture?.result && state.round?.index === 3 && state.round.matches.every((match) => match.result)) {
+    const finalists = state.round.matches.map(winnerOf);
+    finalFixture = makeFixture(finalists[0], finalists[1], "awards-final");
+  }
+  if (!finalFixture?.result) {
+    const pool = (state.qualifiers?.length ? state.qualifiers : teams.map((team) => team.id))
+      .filter((teamId, index, items) => items.indexOf(teamId) === index)
+      .sort((a, b) => strength(b) - strength(a));
+    finalFixture = makeFixture(pool[0], pool[1], "awards-final-fallback");
+  }
+
+  const championId = winnerOf(finalFixture);
+  const runnerUpId = finalFixture.homeId === championId ? finalFixture.awayId : finalFixture.homeId;
+  let thirdPlaceFixture = state.thirdPlaceFixture;
+  if (!thirdPlaceFixture?.result) {
+    const bronzePool = (state.qualifiers?.length ? state.qualifiers : teams.map((team) => team.id))
+      .filter((teamId) => teamId !== championId && teamId !== runnerUpId)
+      .sort((a, b) => strength(b) - strength(a));
+    thirdPlaceFixture = makeFixture(bronzePool[0], bronzePool[1], "awards-bronze");
+  }
+  const thirdId = winnerOf(thirdPlaceFixture);
+  return [championId, runnerUpId, thirdId].map((teamId) => teams.find((team) => team.id === teamId)).filter(Boolean);
+}
+
+function TournamentHonours({ state, teams, allPlayers, userPlayers, userTeam, userRating }) {
+  const podium = resolveTournamentPodium(state, teams, userTeam.id, userRating);
+  if (podium.length < 3) return null;
+  const stats = tournamentPlayerStats(allPlayers, userPlayers, state.history ?? [], userTeam.id, podium);
+  const teamFor = (player) => teams.find((team) => team.id === player?.teamId);
+  const ball = [...stats].filter((player) => player.position !== "GK")
+    .sort((a, b) => b.awardScore - a.awardScore || b.goals - a.goals || b.rating - a.rating)
+    .slice(0, 3);
+  const boot = [...stats].filter((player) => player.position !== "GK")
+    .sort((a, b) => b.goals - a.goals || b.assists - a.assists || b.rating - a.rating)
+    .slice(0, 3);
+  const glove = [...stats].filter((player) => player.position === "GK")
+    .sort((a, b) => b.awardScore - a.awardScore || b.rating - a.rating)[0];
+  const youngNames = /yamal|cubarsi|estevao|endrick|guler|yildiz|zaire-emery|mainoo|barco|echeverri/i;
+  const young = [...stats].filter((player) => youngNames.test(player.name))
+    .sort((a, b) => b.awardScore - a.awardScore || b.rating - a.rating)[0] ?? ball[0];
+  const seededDiscipline = (team) => Math.abs(((Number(state.seed) || 1) + team.id * 29) % 11);
+  const userCards = (state.history ?? []).reduce((sum, fixture) => sum + (fixture.result?.report?.events ?? [])
+    .filter((event) => event.teamId === userTeam.id && (event.type === "yellow" || event.type === "red"))
+    .reduce((cards, event) => cards + (event.type === "red" ? 3 : 1), 0), 0);
+  const fairPlay = [...teams].sort((a, b) =>
+    (a.id === userTeam.id ? userCards : seededDiscipline(a)) - (b.id === userTeam.id ? userCards : seededDiscipline(b))
+    || a.rating - b.rating
+  )[0];
+
+  const semifinalRound = [...(state.completedRounds ?? []), state.round].find((round) => round?.index === 3);
+  const semifinalists = semifinalRound?.matches?.flatMap((match) => [match.homeId, match.awayId]) ?? podium.map((team) => team.id);
+  const sensation = semifinalists.map((id) => teams.find((team) => team.id === id)).filter(Boolean)
+    .sort((a, b) => a.rating - b.rating)[0] ?? podium[2];
+  const disappointment = [...teams]
+    .filter((team) => !semifinalists.includes(team.id))
+    .sort((a, b) => b.rating - a.rating)[0];
+
+  const AwardPlayer = ({ player }) => {
+    const team = teamFor(player);
+    return <><h3 title={player.name}>{shortPlayerName(player.name)}</h3><p><Flag code={team?.code} /> {teamName(team)}</p></>;
+  };
+
+  return (
+    <section className="tournament-honours">
+      <div className="honours-heading">
+        <div><span className="hero-label">Итоги чемпионата мира</span><h2>Пьедестал и награды FIFA</h2></div>
+        <p>Награды рассчитаны по результатам этой игры</p>
+      </div>
+
+      <div className="podium">
+        {[podium[1], podium[0], podium[2]].map((team, index) => {
+          const place = [2, 1, 3][index];
+          return (
+            <article className={`podium-place place-${place}`} key={team.id}>
+              <span className="podium-medal">{place === 1 ? "🥇" : place === 2 ? "🥈" : "🥉"}</span>
+              <Flag code={team.code} className="podium-flag" />
+              <small>{place}-е место</small>
+              <h3>{teamName(team)}</h3>
+              <b>{place === 1 ? "Чемпион мира" : place === 2 ? "Финалист" : "Бронзовый призёр"}</b>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="awards-grid">
+        <article className="award-card golden">
+          <span className="award-icon">⚽</span><small>adidas Golden Ball</small>
+          <AwardPlayer player={ball[0]} />
+          <em>Лучший игрок турнира</em>
+          <div><span>🥈 {shortPlayerName(ball[1].name)}</span><span>🥉 {shortPlayerName(ball[2].name)}</span></div>
+        </article>
+        <article className="award-card boot">
+          <span className="award-icon">👟</span><small>adidas Golden Boot</small>
+          <AwardPlayer player={boot[0]} />
+          <em>{boot[0].goals} голов · лучший бомбардир</em>
+          <div><span>🥈 {shortPlayerName(boot[1].name)} · {boot[1].goals}</span><span>🥉 {shortPlayerName(boot[2].name)} · {boot[2].goals}</span></div>
+        </article>
+        <article className="award-card">
+          <span className="award-icon">🧤</span><small>adidas Golden Glove</small>
+          <AwardPlayer player={glove} /><em>Лучший вратарь</em>
+        </article>
+        <article className="award-card">
+          <span className="award-icon">🌟</span><small>FIFA Young Player Award</small>
+          <AwardPlayer player={young} /><em>Лучший молодой игрок</em>
+        </article>
+        <article className="award-card fair-play">
+          <span className="award-icon">🤝</span><small>FIFA Fair Play Trophy</small>
+          <h3>{teamName(fairPlay)}</h3><p><Flag code={fairPlay.code} /> Самая корректная сборная</p>
+          <em>Приз за честную игру</em>
+        </article>
+      </div>
+
+      <div className="tournament-stories">
+        <article><span>🚀</span><div><small>Сенсация турнира</small><h3><Flag code={sensation.code} /> {teamName(sensation)}</h3><p>Превзошла ожидания и добралась до решающих матчей.</p></div></article>
+        <article className="flop"><span>📉</span><div><small>Разочарование турнира</small><h3><Flag code={disappointment.code} /> {teamName(disappointment)}</h3><p>От сборной ждали борьбы за медали, но путь закончился раньше.</p></div></article>
+      </div>
+    </section>
+  );
+}
+
 function TeamLeaders({ history, userTeamId, userPlayers }) {
   const totals = new Map(userPlayers.map((player) => [player.name, {
     name: player.name,
@@ -554,20 +721,73 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
     });
   }
 
+  function makeThirdPlaceFixture(semifinal, simulate = true) {
+    const losers = semifinal.matches.map((match) => {
+      const winner = winnerOf(match);
+      return match.homeId === winner ? match.awayId : match.homeId;
+    });
+    const fixture = { id: "third-place", homeId: losers[0], awayId: losers[1], result: null };
+    if (!simulate) return fixture;
+    const homeRating = losers[0] === userTeam.id ? userRating : teams.find((team) => team.id === losers[0]).rating;
+    const awayRating = losers[1] === userTeam.id ? userRating : teams.find((team) => team.id === losers[1]).rating;
+    return {
+      ...fixture,
+      result: simulateMatch(homeRating, awayRating, `${state.seed}-third-place`, "balanced", true),
+    };
+  }
+
+  function simulateTournamentFinish(completedRound) {
+    let teamIds = completedRound.matches.map(winnerOf);
+    let semifinal = completedRound.index === 3 ? completedRound : null;
+    let finalRound = completedRound.index === 4 ? completedRound : null;
+    for (let roundIndex = completedRound.index + 1; roundIndex <= 4; roundIndex += 1) {
+      const nextRound = createKnockoutRound(teamIds, teams, -1, userRating, `${state.seed}-finish`, roundIndex);
+      if (roundIndex === 3) semifinal = nextRound;
+      if (roundIndex === 4) finalRound = nextRound;
+      teamIds = nextRound.matches.map(winnerOf);
+    }
+    return {
+      finalFixture: finalRound?.matches[0] ?? null,
+      thirdPlaceFixture: semifinal ? makeThirdPlaceFixture(semifinal, true) : null,
+    };
+  }
+
   function advanceRound() {
     const winners = state.round.matches.map(winnerOf);
+    const completedRounds = [...(state.completedRounds ?? []), state.round];
     if (!winners.includes(userTeam.id)) {
       if (state.round.index === 4) {
-        setState({ ...state, stage: "runner-up", placement: 2, message: "Серебро чемпионата мира" });
+        setState({
+          ...state,
+          stage: "runner-up",
+          placement: 2,
+          finalFixture: state.round.matches[0],
+          completedRounds,
+          message: "Серебро чемпионата мира",
+        });
         return;
       }
       if (state.round.index === 3) {
         const otherSemifinal = state.round.matches.find((match) => match.homeId !== userTeam.id && match.awayId !== userTeam.id);
         const otherWinner = winnerOf(otherSemifinal);
         const otherLoser = otherSemifinal.homeId === otherWinner ? otherSemifinal.awayId : otherSemifinal.homeId;
+        const finalFixture = {
+          id: "final-background",
+          homeId: winners[0],
+          awayId: winners[1],
+          result: simulateMatch(
+            teams.find((team) => team.id === winners[0]).rating,
+            teams.find((team) => team.id === winners[1]).rating,
+            `${state.seed}-background-final`,
+            "balanced",
+            true,
+          ),
+        };
         setState({
           ...state,
           stage: "third-place",
+          finalFixture,
+          completedRounds,
           thirdPlaceFixture: {
             id: "third-place",
             homeId: userTeam.id,
@@ -578,15 +798,30 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
         });
         return;
       }
-      setState({ ...state, stage: "eliminated", message: `Путь завершён: ${state.round.name}` });
+      const finish = simulateTournamentFinish(state.round);
+      setState({
+        ...state,
+        ...finish,
+        completedRounds,
+        stage: "eliminated",
+        message: `Путь завершён: ${state.round.name}`,
+      });
       return;
     }
     if (state.round.index === 4) {
-      setState({ ...state, stage: "champion", placement: 1, message: "Ты выиграл чемпионат мира!" });
+      setState({
+        ...state,
+        stage: "champion",
+        placement: 1,
+        finalFixture: state.round.matches[0],
+        completedRounds,
+        message: "Ты выиграл чемпионат мира!",
+      });
       return;
     }
     const round = createKnockoutRound(winners, teams, userTeam.id, userRating, state.seed, state.round.index + 1);
-    setState({ ...state, stage: "knockout", round });
+    const thirdPlaceFixture = state.round.index === 3 ? makeThirdPlaceFixture(state.round, true) : state.thirdPlaceFixture;
+    setState({ ...state, stage: "knockout", round, thirdPlaceFixture, completedRounds });
   }
 
   function finishThirdPlace() {
@@ -730,7 +965,7 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
 
       {["eliminated", "champion", "runner-up", "bronze", "fourth"].includes(state.stage) && (
         <section className={`ending-screen ${state.stage}`}>
-          <div className="ending-watermark" aria-hidden="true"><Flag code={userTeam.code} className="ending-flag" /><span>{teamName(userTeam)}</span></div>
+          <div className="ending-watermark" aria-hidden="true"><Flag code={userTeam.code} className="ending-flag" /></div>
           <div className="ending-cup">
             {state.stage === "champion" ? "🥇" : state.stage === "runner-up" ? "🥈" : state.stage === "bronze" ? "🥉" : <Icon name="trophy" size={82} />}
           </div>
@@ -749,6 +984,17 @@ function Tournament({ state, setState, teams, allPlayers, userPlayers, userTeam,
           <p>Матчей сыграно: {state.history?.length ?? 0}. Твой состав сохранён — можно вернуться, усилить его и начать заново.</p>
           <div className="ending-actions"><button className="secondary-button" onClick={onBackToDraft}>Изменить состав</button><button className="primary-button" onClick={onNewGame}>Выбрать другую страну</button></div>
         </section>
+      )}
+
+      {["eliminated", "champion", "runner-up", "bronze", "fourth"].includes(state.stage) && (
+        <TournamentHonours
+          state={state}
+          teams={teams}
+          allPlayers={allPlayers}
+          userPlayers={userPlayers}
+          userTeam={userTeam}
+          userRating={userRating}
+        />
       )}
 
       {state.history?.length > 0 && (
